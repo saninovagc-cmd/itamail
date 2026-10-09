@@ -2,17 +2,57 @@
 
 import { Building2, Globe, Mail, CreditCard, Users, TrendingUp, AlertTriangle } from "lucide-react";
 
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+
 export default function AdminDashboardPage() {
-  // Dans un vrai flux, on ferait des COUNT() via le client Supabase
-  // Ici on simule les données globales de la plateforme
-  const stats = {
-    totalClients: 42,
-    activeDomains: 38,
-    activeMailboxes: 412,
-    monthlyRevenue: 1250000, // En FCFA
-    openTickets: 3,
-    expiringSubs: 5
-  };
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalClients: 0,
+    activeDomains: 0,
+    activeMailboxes: 0,
+    monthlyRevenue: 0, 
+    openTickets: 0,
+    expiringSubs: 0
+  });
+  const [recentOrgs, setRecentOrgs] = useState<any[]>([]);
+
+  useEffect(() => {
+    async function loadGlobalStats() {
+      const supabase = createClient();
+      
+      const { count: orgCount } = await supabase.from('organizations').select('*', { count: 'exact', head: true });
+      const { count: domainCount } = await supabase.from('domains').select('*', { count: 'exact', head: true });
+      const { count: mailCount } = await supabase.from('mailboxes').select('*', { count: 'exact', head: true });
+      
+      const { data: orgs } = await supabase.from('organizations')
+        .select('name, created_at, subscriptions(plan)')
+        .order('created_at', { ascending: false })
+        .limit(3);
+        
+      if (orgs) {
+        setRecentOrgs(orgs);
+      }
+      
+      // Calcul basique du MRR (simulé à partir du nombre de clients pour l'instant)
+      const baseMRR = (orgCount || 0) * 15000;
+
+      setStats({
+        totalClients: orgCount || 0,
+        activeDomains: domainCount || 0,
+        activeMailboxes: mailCount || 0,
+        monthlyRevenue: baseMRR,
+        openTickets: 0, // V2
+        expiringSubs: 0 // V2
+      });
+      
+      setLoading(false);
+    }
+    
+    loadGlobalStats();
+  }, []);
+
+  if (loading) return <div className="p-8 text-center text-slate-500 animate-pulse">Chargement des statistiques...</div>;
 
   return (
     <div className="space-y-6">
@@ -107,26 +147,34 @@ export default function AdminDashboardPage() {
             <button className="text-sm text-blue-600 font-medium hover:underline">Voir tout</button>
           </div>
           <div className="divide-y divide-slate-100">
-            {[
-              { nom: "Pharmacie Nouvelle", plan: "BUSINESS", date: "Aujourd'hui" },
-              { nom: "Cabinet d'Avocats Koffi", plan: "PRO", date: "Hier" },
-              { nom: "Startup Tech Cotonou", plan: "STARTER", date: "Il y a 3 jours" }
-            ].map((client, i) => (
-              <div key={i} className="p-4 hover:bg-slate-50 flex justify-between items-center">
-                <div className="flex items-center">
-                  <div className="h-10 w-10 rounded bg-slate-100 border border-slate-200 flex items-center justify-center mr-3">
-                    <Building2 className="h-5 w-5 text-slate-400" />
+            {recentOrgs.length === 0 ? (
+              <div className="p-4 text-center text-slate-500 text-sm">Aucune organisation trouvée</div>
+            ) : (
+              recentOrgs.map((client, i) => {
+                const planName = client.subscriptions && client.subscriptions.length > 0 
+                  ? client.subscriptions[0].plan 
+                  : 'STARTER';
+                
+                return (
+                  <div key={i} className="p-4 hover:bg-slate-50 flex justify-between items-center transition-colors">
+                    <div className="flex items-center">
+                      <div className="h-10 w-10 rounded bg-slate-100 border border-slate-200 flex items-center justify-center mr-3">
+                        <Building2 className="h-5 w-5 text-slate-400" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-slate-800">{client.name}</p>
+                        <p className="text-xs text-slate-500">
+                          Inscrit le : {new Date(client.created_at).toLocaleDateString('fr-FR')}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold px-2 py-1 bg-slate-100 text-slate-600 rounded">
+                      {planName}
+                    </span>
                   </div>
-                  <div>
-                    <p className="font-medium text-slate-800">{client.nom}</p>
-                    <p className="text-xs text-slate-500">Inscrit : {client.date}</p>
-                  </div>
-                </div>
-                <span className="text-xs font-bold px-2 py-1 bg-slate-100 text-slate-600 rounded">
-                  {client.plan}
-                </span>
-              </div>
-            ))}
+                );
+              })
+            )}
           </div>
         </div>
       </div>

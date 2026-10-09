@@ -31,16 +31,41 @@ export default function DashboardPage() {
             .eq('id', userData.org_id)
             .single();
             
+          // Récupérer le vrai domaine
+          const { data: domains } = await supabase.from('domains').select('id, name').eq('organization_id', userData.org_id);
+          const primaryDomain = domains && domains.length > 0 ? domains[0].name : "Aucun domaine lié";
+          const domainIds = domains?.map(d => d.id) || [];
+          
+          // Compter les vraies boîtes mail
+          let mailboxesCount = 0;
+          if (domainIds.length > 0) {
+            const { count } = await supabase.from('mailboxes').select('*', { count: 'exact', head: true }).in('domain_id', domainIds);
+            mailboxesCount = count || 0;
+          }
+          
+          // Récupérer le vrai abonnement
+          const { data: sub } = await supabase.from('subscriptions').select('plan, current_period_end, status').eq('organization_id', userData.org_id).single();
+          const currentPlan = sub?.plan || "STARTER";
+          
+          // Capacités basées sur le plan réel
+          const limits: Record<string, {mailboxes: number, storage: number}> = {
+            "STARTER": { mailboxes: 3, storage: 5 },
+            "PRO": { mailboxes: 15, storage: 50 },
+            "BUSINESS": { mailboxes: 50, storage: 200 }
+          };
+          
+          const planLimits = limits[currentPlan] || limits["STARTER"];
+            
           setOrgData({
             name: org?.name || "Mon Entreprise",
-            domain: "entreprise.bj", // À charger depuis domains
-            plan: "STARTER",
-            mailboxesUsed: 1,
-            mailboxesLimit: 3,
-            storageUsed: 0.5,
-            storageLimit: 5,
-            expirationDate: "2027-10-08",
-            status: "Actif"
+            domain: primaryDomain,
+            plan: currentPlan,
+            mailboxesUsed: mailboxesCount,
+            mailboxesLimit: planLimits.mailboxes,
+            storageUsed: 0, // À calculer selon usage réel dans une V2
+            storageLimit: planLimits.storage,
+            expirationDate: sub?.current_period_end ? new Date(sub.current_period_end).toLocaleDateString('fr-FR') : "N/A",
+            status: sub?.status === 'active' ? "Actif" : "En attente"
           });
         }
       }
