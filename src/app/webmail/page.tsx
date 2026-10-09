@@ -77,7 +77,53 @@ export default function WebmailPage() {
       window.location.href = "/webmail/login";
     } else {
       setUserEmail(savedEmail);
-      setSelectedEmail(MOCK_EMAILS[0]);
+      
+      const fetchMessages = async () => {
+        try {
+          const { createClient } = await import("@/lib/supabase/client");
+          const supabase = createClient();
+          
+          // Récupérer l'ID de la boîte mail
+          const { data: mailbox } = await supabase
+            .from("mailboxes")
+            .select("id")
+            .eq("address", savedEmail)
+            .single();
+            
+          if (mailbox) {
+            const { data: msgs } = await supabase
+              .from("messages")
+              .select("*")
+              .eq("mailbox_id", mailbox.id)
+              .order("created_at", { ascending: false });
+              
+            if (msgs && msgs.length > 0) {
+              const formattedMsgs = msgs.map(m => ({
+                id: m.id,
+                sender: m.sender_name || m.sender_email,
+                email: m.sender_email,
+                to: m.recipient_email,
+                subject: m.subject || "(Sans objet)",
+                preview: m.body_text ? m.body_text.substring(0, 50) + "..." : "",
+                date: new Date(m.created_at).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}),
+                read: m.is_read,
+                folder: m.folder,
+                body: m.body_text || m.body_html || ""
+              }));
+              setEmails(formattedMsgs);
+              setSelectedEmail(formattedMsgs[0]);
+            } else {
+              // Si la boîte est vide, on retire les mocks
+              setEmails([]);
+              setSelectedEmail(null);
+            }
+          }
+        } catch (e) {
+          console.error("Erreur de chargement des messages:", e);
+        }
+      };
+      
+      fetchMessages();
     }
   }, []);
 
