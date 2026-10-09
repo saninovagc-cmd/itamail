@@ -103,7 +103,7 @@ export default function Home() {
             ITA MAIL par ITA INNOVATE
           </div>
           <p className="text-sm text-slate-500">
-            © {new Date().getFullYear()} ITA INNOVATE. Tous droits réservés.
+            © 2026 ITA INNOVATE. Tous droits réservés.
           </p>
           <div className="flex gap-4">
             <Link className="text-sm text-slate-500 hover:text-slate-900" href="#">Mentions légales</Link>
