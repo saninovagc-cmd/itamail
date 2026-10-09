@@ -6,14 +6,26 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json();
     
-    // Structure du payload de Resend Inbound
-    const from = payload.from; // Expéditeur
-    const to = payload.to; // Destinataire (notre client)
-    const subject = payload.subject;
-    const text = payload.text;
-    const html = payload.html;
+    // Ignorer si ce n'est pas un e-mail reçu (pour éviter les erreurs sur email.sent, email.delivered, etc.)
+    if (payload.type && payload.type !== 'email.received') {
+      return NextResponse.json({ success: true, ignored: true, reason: `Type d'événement non géré: ${payload.type}` });
+    }
 
-    // Extraire l'adresse e-mail pure du destinataire (au cas où ce serait sous la forme "Nom <email@domaine.com>")
+    // Structure du payload de Resend Inbound (peut être dans payload.data ou directement dans payload)
+    const emailData = payload.data || payload;
+
+    const from = emailData.from; // Expéditeur
+    const to = emailData.to; // Destinataire (notre client)
+    const subject = emailData.subject;
+    const text = emailData.text;
+    const html = emailData.html;
+
+    // Protection si 'to' est manquant
+    if (!to) {
+      return NextResponse.json({ error: "Destinataire manquant dans le webhook" }, { status: 400 });
+    }
+
+    // Extraire l'adresse e-mail pure du destinataire
     const recipientStr = Array.isArray(to) ? to[0] : to;
     const emailMatch = recipientStr.match(/<([^>]+)>/);
     const recipientEmail = emailMatch ? emailMatch[1] : recipientStr;
