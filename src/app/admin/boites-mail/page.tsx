@@ -66,14 +66,14 @@ export default function BoitesMailAdminPage() {
                         <div className="h-8 w-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center mr-3">
                           <Mail className="h-4 w-4" />
                         </div>
-                        <span className="font-semibold text-slate-900">{mb.email}</span>
+                        <span className="font-semibold text-slate-900">{mb.address}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-slate-700">
                       {mb.domains?.organizations?.name || "Client Inconnu"}
                     </td>
                     <td className="px-6 py-4 text-slate-700">
-                      {mb.domains?.name || "N/A"}
+                      {mb.domains?.domain_name || "N/A"}
                     </td>
                     <td className="px-6 py-4 text-slate-500">
                       {new Date(mb.created_at).toLocaleDateString('fr-FR')}

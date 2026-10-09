@@ -66,7 +66,7 @@ export default function DomainesAdminPage() {
                         <div className="h-8 w-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center mr-3">
                           <Globe className="h-4 w-4" />
                         </div>
-                        <span className="font-semibold text-slate-900">{domain.name}</span>
+                        <span className="font-semibold text-slate-900">{domain.domain_name}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-slate-700">
