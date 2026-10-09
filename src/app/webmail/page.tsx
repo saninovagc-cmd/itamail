@@ -117,6 +117,7 @@ export default function WebmailPage() {
         id: Date.now(),
         sender: "Moi",
         email: userEmail || "",
+        to: composeTo,
         subject: composeSubject,
         preview: composeBody.substring(0, 50) + "...",
         date: new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}),
@@ -278,7 +279,7 @@ export default function WebmailPage() {
                   >
                     <div className="flex justify-between items-baseline mb-1">
                       <h3 className={`text-sm truncate pr-2 ${!email.read ? 'font-bold text-slate-900' : 'font-medium text-slate-700'}`}>
-                        {email.sender}
+                        {activeFolder === 'sent' ? `À : ${(email as any).to}` : email.sender}
                       </h3>
                       <span className={`text-[11px] font-medium flex-shrink-0 ${!email.read ? 'text-blue-600' : 'text-slate-400'}`}>
                         {email.date}
@@ -332,7 +333,9 @@ export default function WebmailPage() {
                           <p className="font-bold text-slate-900">{selectedEmail.sender}</p>
                           <p className="text-sm text-slate-500">&lt;{selectedEmail.email}&gt;</p>
                         </div>
-                        <p className="text-sm text-slate-500 mt-0.5">À : {userEmail}</p>
+                        <p className="text-sm text-slate-500 mt-0.5">
+                          À : {(selectedEmail as any).to || userEmail}
+                        </p>
                       </div>
                     </div>
                     <div className="text-sm font-medium text-slate-400 bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
