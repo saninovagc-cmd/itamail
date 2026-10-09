@@ -124,7 +124,7 @@ export default function SubscriptionPage() {
                 </div>
                 <div>
                   <p className="text-slate-400 text-sm mb-1">Renouvellement</p>
-                  <p className="font-semibold text-lg">{new Date(currentSub.current_period_end).toLocaleDateString('fr-FR')}</p>
+                  <p className="font-semibold text-lg">{currentSub?.current_period_end ? new Date(currentSub.current_period_end).toLocaleDateString('fr-FR') : 'N/A'}</p>
                 </div>
               </div>
               
