@@ -16,6 +16,7 @@ import {
   LogOut,
   ShieldCheck
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 const adminNavigation = [
@@ -37,12 +38,30 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const checkAdmin = async () => {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // Sécurité Super Admin MVP : on bloque tous ceux qui ne sont pas groupita25@gmail.com
+      if (!session || session.user.email !== 'groupita25@gmail.com') {
+        window.location.href = "/dashboard";
+      } else {
+        setIsAdmin(true);
+      }
+    };
+    checkAdmin();
+  }, []);
 
   const handleLogout = async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
     window.location.href = "/login";
   };
+
+  if (!isAdmin) return null; // Écran blanc le temps de vérifier
 
   return (
     <div className="min-h-screen bg-slate-100 flex">
