@@ -53,6 +53,42 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: data.message || "Erreur lors de l'envoi de l'e-mail." }, { status: res.status });
     }
 
+    // 5. Sauvegarder l'e-mail envoyé dans Supabase
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      // Retrouver la boîte mail
+      const senderStr = payload.from;
+      const emailMatch = senderStr.match(/<([^>]+)>/);
+      const senderEmail = emailMatch ? emailMatch[1] : senderStr;
+
+      const { data: mailbox } = await supabase
+        .from('mailboxes')
+        .select('id')
+        .eq('address', senderEmail)
+        .single();
+
+      if (mailbox) {
+        await supabase.from('messages').insert({
+          mailbox_id: mailbox.id,
+          folder: 'sent',
+          sender_name: 'Moi',
+          sender_email: senderEmail,
+          recipient_email: payload.to.join(', '),
+          subject: payload.subject,
+          body_text: payload.text,
+          body_html: '',
+          is_read: true
+        });
+      }
+    } catch (dbError) {
+      console.error("Erreur sauvegarde e-mail envoyé:", dbError);
+      // On ne bloque pas la réponse si la BDD échoue
+    }
+
     return NextResponse.json({ success: true, id: data.id });
     
   } catch (error: any) {
