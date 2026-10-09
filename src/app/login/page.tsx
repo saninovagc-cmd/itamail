@@ -26,8 +26,12 @@ export default function LoginPage() {
       setError("Email ou mot de passe incorrect.");
       setIsLoading(false);
     } else {
-      // Redirection vers le dashboard
-      window.location.href = "/dashboard";
+      // Redirection personnalisée selon l'utilisateur
+      if (email.toLowerCase() === "groupita25@gmail.com") {
+        window.location.href = "/admin";
+      } else {
+        window.location.href = "/dashboard";
+      }
     }
   };
 
