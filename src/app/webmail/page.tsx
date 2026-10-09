@@ -50,6 +50,7 @@ const MOCK_EMAILS = [
 ];
 
 export default function WebmailPage() {
+  const [emails, setEmails] = useState(MOCK_EMAILS);
   const [activeFolder, setActiveFolder] = useState("inbox");
   const [selectedEmail, setSelectedEmail] = useState<typeof MOCK_EMAILS[0] | null>(null);
   const [isComposing, setIsComposing] = useState(false);
@@ -111,6 +112,19 @@ export default function WebmailPage() {
         throw new Error("Erreur d'envoi");
       }
       
+      // Ajouter l'e-mail envoyé dans l'interface (dossier 'sent')
+      setEmails(prev => [{
+        id: Date.now(),
+        sender: "Moi",
+        email: userEmail || "",
+        subject: composeSubject,
+        preview: composeBody.substring(0, 50) + "...",
+        date: new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'}),
+        read: true,
+        folder: "sent",
+        body: composeBody
+      }, ...prev]);
+
       setSentSuccess(true);
       setTimeout(() => {
         setIsComposing(false);
@@ -128,7 +142,7 @@ export default function WebmailPage() {
     }
   };
 
-  const filteredEmails = MOCK_EMAILS.filter(e => 
+  const filteredEmails = emails.filter(e => 
     e.folder === activeFolder && 
     (e.subject.toLowerCase().includes(searchQuery.toLowerCase()) || 
      e.sender.toLowerCase().includes(searchQuery.toLowerCase()))
