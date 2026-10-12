@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    const { from, to, cc, bcc, subject, text } = await request.json();
+    const { from, to, cc, bcc, subject, text, attachments } = await request.json();
 
     // 1. Validation basique
     if (!to || !subject || !text) {
@@ -29,13 +29,19 @@ export async function POST(request: Request) {
     // L'adresse 'from' DOIT être vérifiée sur votre compte Resend (ex: 'contact@itamya.store')
     const payload: any = {
       from: from || "ITA MAIL <onboarding@resend.dev>", // L'adresse par défaut de test Resend
-      to: to.split(',').map((email: string) => email.trim()),
+      to: to.split(',').map((email: string) => email.trim()).filter(Boolean),
       subject: subject,
       text: text,
     };
 
-    if (cc) payload.cc = cc.split(',').map((email: string) => email.trim());
-    if (bcc) payload.bcc = bcc.split(',').map((email: string) => email.trim());
+    if (cc) payload.cc = cc.split(',').map((email: string) => email.trim()).filter(Boolean);
+    if (bcc) payload.bcc = bcc.split(',').map((email: string) => email.trim()).filter(Boolean);
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      payload.attachments = attachments.map((att: any) => ({
+        filename: att.filename,
+        content: att.content, // Base64 string
+      }));
+    }
 
     // 4. Appel HTTP natif vers l'API Resend (pas besoin de d'installer le package 'resend')
     const res = await fetch('https://api.resend.com/emails', {
@@ -54,6 +60,7 @@ export async function POST(request: Request) {
     }
 
     // 5. Sauvegarder l'e-mail envoyé dans Supabase
+    let savedMessageId: string | null = null;
     try {
       const { createClient } = require('@supabase/supabase-js');
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -72,24 +79,47 @@ export async function POST(request: Request) {
         .single();
 
       if (mailbox) {
-        await supabase.from('messages').insert({
-          mailbox_id: mailbox.id,
-          folder: 'sent',
-          sender_name: 'Moi',
-          sender_email: senderEmail,
-          recipient_email: payload.to.join(', '),
-          subject: payload.subject,
-          body_text: payload.text,
-          body_html: '',
-          is_read: true
-        });
+        const metaPayload = {
+          resend_id: data.id || null,
+          to_all: payload.to,
+          cc: payload.cc || [],
+          attachments: Array.isArray(attachments)
+            ? attachments.map((att: any, idx: number) => ({
+                id: `sent-att-${idx}`,
+                filename: att.filename,
+                size: att.size || 0,
+                content_type: att.content_type || 'application/octet-stream',
+              }))
+            : [],
+        };
+        const htmlWithMeta = `<!--ITA_META:${JSON.stringify(metaPayload)}-->`;
+
+        const { data: inserted } = await supabase
+          .from('messages')
+          .insert({
+            mailbox_id: mailbox.id,
+            folder: 'sent',
+            sender_name: 'Moi',
+            sender_email: senderEmail,
+            recipient_email: payload.to.join(', '),
+            subject: payload.subject,
+            body_text: payload.text,
+            body_html: htmlWithMeta,
+            is_read: true
+          })
+          .select('id')
+          .single();
+
+        if (inserted?.id) {
+          savedMessageId = inserted.id;
+        }
       }
     } catch (dbError) {
       console.error("Erreur sauvegarde e-mail envoyé:", dbError);
       // On ne bloque pas la réponse si la BDD échoue
     }
 
-    return NextResponse.json({ success: true, id: data.id });
+    return NextResponse.json({ success: true, id: data.id, messageId: savedMessageId });
     
   } catch (error: any) {
     console.error("Erreur serveur API webmail:", error);
