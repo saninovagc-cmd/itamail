@@ -17,8 +17,29 @@ export async function POST(request: Request) {
     const from = emailData.from; // Expéditeur
     const to = emailData.to; // Destinataire (notre client)
     const subject = emailData.subject;
-    const text = emailData.text;
-    const html = emailData.html;
+    let text = emailData.text;
+    let html = emailData.html;
+
+    // Resend n'inclut pas le corps du mail dans le webhook email.received (seulement email_id).
+    // On récupère donc le contenu complet via l'API Receiving de Resend.
+    const resendApiKey = process.env.RESEND_API_KEY;
+    if (!text && !html && emailData.email_id && resendApiKey) {
+      try {
+        const emailRes = await fetch(`https://api.resend.com/emails/receiving/${emailData.email_id}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${resendApiKey}`,
+          },
+        });
+        if (emailRes.ok) {
+          const fullEmail = await emailRes.json();
+          text = fullEmail.text || '';
+          html = fullEmail.html || '';
+        }
+      } catch (fetchErr) {
+        console.error("[Webhook Inbound] Erreur lors de la récupération du corps de l'e-mail:", fetchErr);
+      }
+    }
 
     // Protection si 'to' est manquant
     if (!to) {
