@@ -87,19 +87,26 @@ export async function POST(request: Request) {
           );
         }
 
-        const transactionId = txData?.v1?.id || txData?.id;
+        const txObject = txData['v1/transaction'] || txData?.v1 || txData;
+        const transactionId = txObject?.id || txData?.id;
+        let checkoutUrl = txObject?.payment_url;
 
-        // Génération du token de checkout
-        const tokenRes = await fetch(`${baseUrl}/v1/transactions/${transactionId}/token`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${FEDAPAY_SECRET_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        const tokenData = await tokenRes.json();
-        const checkoutUrl = tokenData?.url || tokenData?.token?.url;
+        // Si payment_url n'est pas directement présent, générer un token
+        if (!checkoutUrl && transactionId) {
+          try {
+            const tokenRes = await fetch(`${baseUrl}/v1/transactions/${transactionId}/token`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${FEDAPAY_SECRET_KEY}`,
+                'Content-Type': 'application/json',
+              },
+            });
+            const tokenData = await tokenRes.json();
+            checkoutUrl = tokenData?.url || tokenData?.token?.url;
+          } catch (tokenErr) {
+            console.error('[FedaPay Token Gen Error]', tokenErr);
+          }
+        }
 
         return NextResponse.json({
           success: true,
