@@ -18,6 +18,8 @@ export default function MailboxesPage() {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [loading, setLoading] = useState(true);
+  const [maxAllowedBoxes, setMaxAllowedBoxes] = useState<number | null>(null);
+  const [hasActiveSubscription, setHasActiveSubscription] = useState<boolean>(true);
   
   // States pour la création
   const [isAdding, setIsAdding] = useState(false);
@@ -36,7 +38,7 @@ export default function MailboxesPage() {
     if (user) {
       const { data: userData } = await supabase
         .from("users")
-        .select("org_id")
+        .select("org_id, organizations(stripe_customer_id)")
         .eq("id", user.id)
         .single();
 
@@ -60,6 +62,24 @@ export default function MailboxesPage() {
           .order("created_at", { ascending: false });
 
         if (mailboxesData) setMailboxes(mailboxesData);
+
+        // Charger le quota d'abonnement
+        const { data: subData } = await supabase
+          .from("subscriptions")
+          .select("*")
+          .eq("org_id", userData.org_id)
+          .maybeSingle();
+
+        const orgMeta: any = userData.organizations;
+        let quota = 1;
+        if (orgMeta?.stripe_customer_id && orgMeta.stripe_customer_id.startsWith("fedapay:")) {
+          const parts = orgMeta.stripe_customer_id.replace("fedapay:", "").split("|");
+          if (parts.length >= 3) {
+            quota = parseInt(parts[2]) || 1;
+          }
+        }
+        setMaxAllowedBoxes(quota);
+        setHasActiveSubscription(Boolean(subData && (subData.status === "ACTIVE" || subData.status === "active")));
       }
     }
     setLoading(false);
@@ -76,6 +96,12 @@ export default function MailboxesPage() {
 
     if (!prefix || !selectedDomain || password.length < 8) {
       setAddError("Veuillez remplir tous les champs (le mot de passe doit faire au moins 8 caractères).");
+      setIsAdding(false);
+      return;
+    }
+
+    if (maxAllowedBoxes !== null && mailboxes.length >= maxAllowedBoxes) {
+      setAddError(`Limite atteinte (${mailboxes.length} / ${maxAllowedBoxes} boîtes). Veuillez faire évoluer votre abonnement pour ajouter des boîtes supplémentaires (+5 000 F CFA / mois par boîte).`);
       setIsAdding(false);
       return;
     }
@@ -121,20 +147,59 @@ export default function MailboxesPage() {
     return <div className="flex justify-center items-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>;
   }
 
+  const isQuotaReached = maxAllowedBoxes !== null && mailboxes.length >= maxAllowedBoxes;
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Boîtes e-mail</h1>
-          <p className="text-slate-500">Créez et gérez les adresses de votre organisation.</p>
+          <p className="text-slate-500">
+            Créez et gérez les adresses de votre organisation
+            {maxAllowedBoxes !== null && (
+              <span className="ml-2 font-semibold text-slate-700">
+                ({mailboxes.length} / {maxAllowedBoxes} boîte{maxAllowedBoxes > 1 ? "s" : ""} allouée{maxAllowedBoxes > 1 ? "s" : ""})
+              </span>
+            )}
+          </p>
         </div>
-        <button 
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-        >
-          {showForm ? "Annuler" : <><Plus className="h-4 w-4 mr-2" /> Créer une adresse</>}
-        </button>
+        <div className="flex items-center gap-3">
+          {isQuotaReached && (
+            <a
+              href="/dashboard/abonnement"
+              className="inline-flex items-center px-3.5 py-2 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 text-xs font-bold transition-colors"
+            >
+              + Augmenter le quota
+            </a>
+          )}
+          <button 
+            onClick={() => setShowForm(!showForm)}
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+          >
+            {showForm ? "Annuler" : <><Plus className="h-4 w-4 mr-2" /> Créer une adresse</>}
+          </button>
+        </div>
       </div>
+
+      {isQuotaReached && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start justify-between text-amber-900 text-sm">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Limite de boîtes atteinte pour votre organisation</p>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Votre formule actuelle inclut <strong>{maxAllowedBoxes} boîte{maxAllowedBoxes > 1 ? "s" : ""}</strong>. Vous pouvez facilement ajouter des adresses pour seulement <strong>5.000 F CFA / mois</strong> (ou <strong>50.000 F CFA / an</strong>) chacune.
+              </p>
+            </div>
+          </div>
+          <a
+            href="/dashboard/abonnement"
+            className="text-xs font-bold bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700 transition-colors ml-4 flex-shrink-0"
+          >
+            Ajuster mon forfait
+          </a>
+        </div>
+      )}
 
       {showForm && (
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm animate-in fade-in slide-in-from-top-4">
