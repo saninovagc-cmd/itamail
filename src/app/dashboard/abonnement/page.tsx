@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { 
@@ -31,7 +31,7 @@ type OrgSubscription = {
   amount: number;
 };
 
-export default function SubscriptionPage() {
+function SubscriptionContent() {
   const searchParams = useSearchParams();
   const [currentSub, setCurrentSub] = useState<OrgSubscription | null>(null);
   const [currentBoxesCreated, setCurrentBoxesCreated] = useState<number>(0);
@@ -605,5 +605,19 @@ export default function SubscriptionPage() {
       )}
 
     </div>
+  );
+}
+
+export default function SubscriptionPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        </div>
+      }
+    >
+      <SubscriptionContent />
+    </Suspense>
   );
 }
