@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    const { from, to, cc, bcc, subject, text, attachments } = await request.json();
+    const { from, to, cc, bcc, subject, text, html: rawHtml, attachments } = await request.json();
 
     // 1. Validation basique
-    if (!to || !subject || !text) {
+    if (!to || !subject || (!text && !rawHtml)) {
       return NextResponse.json({ error: "Des champs obligatoires sont manquants." }, { status: 400 });
     }
 
@@ -31,9 +31,10 @@ export async function POST(request: Request) {
       from: from || "ITA MAIL <onboarding@resend.dev>", // L'adresse par défaut de test Resend
       to: to.split(',').map((email: string) => email.trim()).filter(Boolean),
       subject: subject,
-      text: text,
+      text: text || "",
     };
 
+    if (rawHtml) payload.html = rawHtml;
     if (cc) payload.cc = cc.split(',').map((email: string) => email.trim()).filter(Boolean);
     if (bcc) payload.bcc = bcc.split(',').map((email: string) => email.trim()).filter(Boolean);
     if (Array.isArray(attachments) && attachments.length > 0) {
@@ -92,7 +93,8 @@ export async function POST(request: Request) {
               }))
             : [],
         };
-        const htmlWithMeta = `<!--ITA_META:${JSON.stringify(metaPayload)}-->`;
+        const baseHtml = rawHtml || (payload.text ? payload.text.replace(/\n/g, '<br/>') : '');
+        const htmlWithMeta = `${baseHtml}<!--ITA_META:${JSON.stringify(metaPayload)}-->`;
 
         const { data: inserted } = await supabase
           .from('messages')
@@ -103,7 +105,7 @@ export async function POST(request: Request) {
             sender_email: senderEmail,
             recipient_email: payload.to.join(', '),
             subject: payload.subject,
-            body_text: payload.text,
+            body_text: payload.text || '',
             body_html: htmlWithMeta,
             is_read: true
           })

@@ -28,8 +28,22 @@ import {
   Image as ImageIcon,
   Loader2,
   RotateCcw,
-  Save
+  Save,
+  Settings,
+  ChevronDown,
+  ChevronUp,
+  Palette
 } from "lucide-react";
+import Link from "next/link";
+import { 
+  getMailSettings, 
+  saveMailSettingsToStorage, 
+  DEFAULT_MAIL_SETTINGS, 
+  AVAILABLE_FONTS, 
+  AVAILABLE_FONT_SIZES, 
+  AVAILABLE_COLORS, 
+  type MailSettings 
+} from "../dashboard/parametres/page";
 
 type AttachmentItem = {
   id: string;
@@ -58,6 +72,7 @@ type EmailItem = {
   preview: string;
   date: string;
   fullDate?: string;
+  created_at?: string;
   read: boolean;
   starred?: boolean;
   folder: string;
@@ -109,6 +124,22 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} o`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} Mo`;
+}
+
+function normalizeSubject(subj: string | null | undefined): string {
+  if (!subj) return "";
+  return subj
+    .replace(/^(\s*(re|fwd|fw|tr)\s*:\s*)+/gi, "")
+    .trim()
+    .toLowerCase();
+}
+
+function sanitizeHtmlForDisplay(html: string | null | undefined): string {
+  if (!html) return "";
+  // Nettoyer les scripts et les attributs dangereux mais conserver l'intégralité des styles, tables, polices et couleurs
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/\bon\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
 }
 
 function formatShortDate(dateStr: string): string {
@@ -169,9 +200,20 @@ export default function WebmailPage() {
   const [composeTo, setComposeTo] = useState("");
   const [composeCc, setComposeCc] = useState("");
   const [composeBcc, setComposeBcc] = useState("");
+  const [composeToTags, setComposeToTags] = useState<string[]>([]);
+  const [composeCcTags, setComposeCcTags] = useState<string[]>([]);
+  const [composeBccTags, setComposeBccTags] = useState<string[]>([]);
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
   const [composeAttachments, setComposeAttachments] = useState<ComposeAttachment[]>([]);
+
+  // Paramètres utilisateur
+  const [mailSettings, setMailSettings] = useState<MailSettings>(DEFAULT_MAIL_SETTINGS);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsSavedToast, setSettingsSavedToast] = useState(false);
+
+  // Vue Chronologie / Dépliage des échanges
+  const [expandedThreadIds, setExpandedThreadIds] = useState<Record<string | number, boolean>>({});
 
   const composeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composeToInputRef = useRef<HTMLInputElement | null>(null);
@@ -201,6 +243,7 @@ export default function WebmailPage() {
       preview: plainPreview ? plainPreview.substring(0, 80) + (plainPreview.length > 80 ? "..." : "") : "(Cliquer pour charger le contenu)",
       date: formatShortDate(m.created_at),
       fullDate: formatFullDate(m.created_at),
+      created_at: m.created_at,
       read: Boolean(m.is_read),
       starred: Boolean(meta?.starred),
       folder: m.folder || "inbox",
@@ -259,6 +302,8 @@ export default function WebmailPage() {
       window.location.href = "/webmail/login";
     } else {
       setUserEmail(savedEmail);
+      const userSettings = getMailSettings(savedEmail);
+      setMailSettings(userSettings);
       fetchMessages(savedEmail);
     }
   }, []);
@@ -269,9 +314,12 @@ export default function WebmailPage() {
     if (email.folder === "drafts") {
       setEditingDraftId(email.id);
       setComposerTitle("Modifier le brouillon");
-      setComposeTo(email.to || "");
-      setComposeCc(email.cc?.join(", ") || "");
+      setComposeTo("");
+      setComposeToTags(email.to ? email.to.split(",").map((s) => s.trim()).filter(Boolean) : []);
+      setComposeCc("");
+      setComposeCcTags(email.cc || []);
       setComposeBcc("");
+      setComposeBccTags([]);
       setShowCcBcc(Boolean(email.cc && email.cc.length > 0));
       setComposeSubject(email.subject === "(Sans objet)" ? "" : email.subject);
       setComposeBody(email.body_text || email.body || "");
@@ -402,8 +450,12 @@ export default function WebmailPage() {
     setComposeTo("");
     setComposeCc("");
     setComposeBcc("");
+    setComposeToTags([]);
+    setComposeCcTags([]);
+    setComposeBccTags([]);
     setComposeSubject("");
-    setComposeBody("");
+    const defaultSig = mailSettings.signature ? `\n\n${mailSettings.signature}` : "";
+    setComposeBody(defaultSig);
     setComposeAttachments([]);
     setShowCcBcc(false);
     setSentSuccess(false);
@@ -421,14 +473,19 @@ export default function WebmailPage() {
       .map((line) => `> ${line}`)
       .join("\n");
 
+    const defaultSig = mailSettings.signature ? `\n\n${mailSettings.signature}` : "";
+
     setComposerTitle(`Répondre à ${email.sender}`);
-    setComposeTo(replyTarget);
+    setComposeTo("");
+    setComposeToTags(replyTarget ? [replyTarget] : []);
     setComposeCc("");
     setComposeBcc("");
+    setComposeCcTags([]);
+    setComposeBccTags([]);
     setShowCcBcc(false);
     setComposeSubject(`Re: ${cleanSubj}`);
     setComposeBody(
-      `\n\n---\nLe ${email.fullDate || email.date}, ${email.sender} <${email.email}> a écrit :\n${quotedText}`
+      `${defaultSig}\n\n---\nLe ${email.fullDate || email.date}, ${email.sender} <${email.email}> a écrit :\n${quotedText}`
     );
     setComposeAttachments([]);
     setSentSuccess(false);
@@ -449,11 +506,11 @@ export default function WebmailPage() {
 
     // Collecter toutes les autres adresses dans À et Cc (sauf soi-même et le destinataire principal)
     const rawOthers = [
-      ...(email.to_all || email.to.split(",").map((s) => s.trim())),
+      ...(email.to_all || (email.to ? email.to.split(",").map((s) => s.trim()) : [])),
       ...(email.cc || []),
     ];
 
-    const primaryLower = primaryRecipient.toLowerCase().trim();
+    const primaryLower = (primaryRecipient || "").toLowerCase().trim();
     const uniqueCc: string[] = [];
 
     for (const addr of rawOthers) {
@@ -476,14 +533,19 @@ export default function WebmailPage() {
       .map((line) => `> ${line}`)
       .join("\n");
 
+    const defaultSig = mailSettings.signature ? `\n\n${mailSettings.signature}` : "";
+
     setComposerTitle(`Répondre à tous`);
-    setComposeTo(primaryRecipient);
-    setComposeCc(uniqueCc.join(", "));
+    setComposeTo("");
+    setComposeToTags(primaryRecipient ? [primaryRecipient] : []);
+    setComposeCc("");
     setComposeBcc("");
+    setComposeCcTags(uniqueCc);
+    setComposeBccTags([]);
     setShowCcBcc(uniqueCc.length > 0);
     setComposeSubject(`Re: ${cleanSubj}`);
     setComposeBody(
-      `\n\n---\nLe ${email.fullDate || email.date}, ${email.sender} <${email.email}> a écrit :\n${quotedText}`
+      `${defaultSig}\n\n---\nLe ${email.fullDate || email.date}, ${email.sender} <${email.email}> a écrit :\n${quotedText}`
     );
     setComposeAttachments([]);
     setSentSuccess(false);
@@ -503,13 +565,18 @@ export default function WebmailPage() {
     const ccHeader = email.cc && email.cc.length > 0 ? `\nCc : ${email.cc.join(", ")}` : "";
     const forwardHeader = `\n\n---------- Message transféré ----------\nDe : ${email.sender} <${email.email}>\nDate : ${email.fullDate || email.date}\nObjet : ${email.subject}\nÀ : ${email.to || userEmail}${ccHeader}\n\n${email.body_text || email.body || ""}`;
 
+    const defaultSig = mailSettings.signature ? `\n\n${mailSettings.signature}` : "";
+
     setComposerTitle("Transférer le message");
     setComposeTo("");
+    setComposeToTags([]);
     setComposeCc("");
+    setComposeCcTags([]);
     setComposeBcc("");
+    setComposeBccTags([]);
     setShowCcBcc(false);
     setComposeSubject(`Tr: ${cleanSubj}`);
-    setComposeBody(forwardHeader);
+    setComposeBody(`${defaultSig}${forwardHeader}`);
     setComposeAttachments([]);
     setSentSuccess(false);
     setIsComposing(true);
@@ -594,7 +661,17 @@ export default function WebmailPage() {
 
   // Enregistrer en brouillon
   const handleSaveDraft = async () => {
-    if (!composeTo && !composeSubject && !composeBody) {
+    const finalTo = [
+      ...composeToTags,
+      ...(composeTo.trim() ? [composeTo.trim()] : [])
+    ].join(", ");
+
+    const finalCcList = [
+      ...composeCcTags,
+      ...(composeCc.trim() ? [composeCc.trim()] : [])
+    ];
+
+    if (!finalTo && !composeSubject && !composeBody) {
       setIsComposing(false);
       return;
     }
@@ -616,7 +693,7 @@ export default function WebmailPage() {
 
       if (currentMailboxId) {
         const metaPayload = {
-          cc: composeCc ? composeCc.split(",").map((s) => s.trim()).filter(Boolean) : [],
+          cc: finalCcList,
           attachments: [],
         };
         const htmlWithMeta = buildHtmlWithMeta("", metaPayload);
@@ -625,7 +702,7 @@ export default function WebmailPage() {
           await supabase
             .from("messages")
             .update({
-              recipient_email: composeTo || "",
+              recipient_email: finalTo || "",
               subject: composeSubject || "(Sans objet)",
               body_text: composeBody || "",
               body_html: htmlWithMeta,
@@ -637,7 +714,7 @@ export default function WebmailPage() {
             folder: "drafts",
             sender_name: "Moi",
             sender_email: userEmail || "",
-            recipient_email: composeTo || "",
+            recipient_email: finalTo || "",
             subject: composeSubject || "(Sans objet)",
             body_text: composeBody || "",
             body_html: htmlWithMeta,
@@ -696,24 +773,48 @@ export default function WebmailPage() {
   };
 
   const handleSendEmail = async () => {
-    if (!composeTo || !composeSubject || !composeBody) {
-      alert("Veuillez remplir les champs À, Objet et Message.");
+    // 1. Rassembler tous les destinataires (tags validés + saisie en cours)
+    const allTo = [
+      ...composeToTags,
+      ...(composeTo.trim() ? [composeTo.trim()] : [])
+    ];
+
+    const allCc = [
+      ...composeCcTags,
+      ...(composeCc.trim() ? [composeCc.trim()] : [])
+    ];
+
+    const allBcc = [
+      ...composeBccTags,
+      ...(composeBcc.trim() ? [composeBcc.trim()] : [])
+    ];
+
+    if (allTo.length === 0 || !composeSubject.trim() || !composeBody.trim()) {
+      alert("Veuillez renseigner au moins un destinataire, un objet et un corps de message.");
       return;
     }
 
     setIsSending(true);
 
     try {
+      // 2. Générer le HTML mis en forme selon les paramètres (police, taille, couleur)
+      const formattedHtml = `
+        <div style="font-family: ${mailSettings.fontFamily}; font-size: ${mailSettings.fontSize}; color: ${mailSettings.textColor}; line-height: 1.6; white-space: pre-wrap;">
+${composeBody}
+        </div>
+      `.trim();
+
       const response = await fetch("/api/webmail/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           from: userEmail,
-          to: composeTo,
-          cc: showCcBcc && composeCc ? composeCc : undefined,
-          bcc: showCcBcc && composeBcc ? composeBcc : undefined,
+          to: allTo.join(", "),
+          cc: showCcBcc && allCc.length > 0 ? allCc.join(", ") : undefined,
+          bcc: showCcBcc && allBcc.length > 0 ? allBcc.join(", ") : undefined,
           subject: composeSubject,
           text: composeBody,
+          html: formattedHtml,
           attachments: composeAttachments,
         }),
       });
@@ -740,18 +841,19 @@ export default function WebmailPage() {
             id: result.messageId || Date.now(),
             sender: "Moi",
             email: userEmail || "",
-            to: composeTo,
-            to_all: composeTo.split(",").map((s) => s.trim()),
-            cc: showCcBcc && composeCc ? composeCc.split(",").map((s) => s.trim()) : [],
+            to: allTo.join(", "),
+            to_all: allTo,
+            cc: allCc,
             subject: composeSubject,
             preview: composeBody.substring(0, 80) + "...",
             date: new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
             fullDate: formatFullDate(new Date().toISOString()),
+            created_at: new Date().toISOString(),
             read: true,
             folder: "sent",
             body: composeBody,
             body_text: composeBody,
-            body_html: "",
+            body_html: formattedHtml,
             resend_id: result.id || null,
             attachments: composeAttachments.map((att, idx) => ({
               id: `sent-${idx}`,
@@ -773,6 +875,9 @@ export default function WebmailPage() {
         setComposeTo("");
         setComposeCc("");
         setComposeBcc("");
+        setComposeToTags([]);
+        setComposeCcTags([]);
+        setComposeBccTags([]);
         setComposeSubject("");
         setComposeBody("");
         setComposeAttachments([]);
@@ -847,14 +952,28 @@ export default function WebmailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowSettingsModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-blue-600 bg-slate-100/80 hover:bg-blue-50 rounded-lg transition-colors border border-slate-200"
+            title="Paramètres d'affichage, police, couleur et signature"
+          >
+            <Settings className="h-4 w-4 text-slate-500" />
+            <span className="hidden sm:inline">Paramètres</span>
+          </button>
+
           <div className="text-right hidden sm:block">
             <p className="text-sm font-semibold text-slate-800">{userEmail}</p>
             <p className="text-xs font-medium text-emerald-500 flex items-center justify-end">
               Connecté
             </p>
           </div>
-          <div className="h-10 w-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold cursor-pointer shadow-md ring-2 ring-white hover:scale-105 transition-transform">
+          <div 
+            onClick={() => setShowSettingsModal(true)}
+            title="Ouvrir les paramètres"
+            className="h-10 w-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold cursor-pointer shadow-md ring-2 ring-white hover:scale-105 transition-transform"
+          >
             {userEmail.charAt(0).toUpperCase()}
           </div>
         </div>
@@ -916,7 +1035,13 @@ export default function WebmailPage() {
             ))}
           </nav>
 
-          <div className="mt-auto pt-4 border-t border-slate-200/60">
+          <div className="mt-auto pt-4 border-t border-slate-200/60 space-y-1">
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="w-full flex items-center px-3 py-2.5 text-sm font-medium text-slate-600 rounded-lg hover:bg-slate-100 hover:text-slate-900 transition-colors"
+            >
+              <Settings className="h-4 w-4 mr-3 text-slate-400" /> Paramètres
+            </button>
             <button
               onClick={handleLogout}
               className="w-full flex items-center px-3 py-2.5 text-sm font-medium text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors"
@@ -1226,7 +1351,7 @@ export default function WebmailPage() {
                     </div>
                   </div>
 
-                  {/* Corps de l'e-mail */}
+                  {/* Corps de l'e-mail avec rendu fidèle */}
                   {isLoadingEmailBody ? (
                     <div className="flex items-center gap-3 py-12 text-slate-500">
                       <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
@@ -1234,14 +1359,166 @@ export default function WebmailPage() {
                     </div>
                   ) : selectedEmail.body_html ? (
                     <div
-                      className="prose prose-slate max-w-none text-slate-800 leading-relaxed text-[15px] break-words overflow-x-auto"
-                      dangerouslySetInnerHTML={{ __html: selectedEmail.body_html }}
+                      className="ita-mail-content border border-slate-100 rounded-xl p-5 bg-white shadow-sm leading-relaxed text-[15px] break-words overflow-x-auto"
+                      style={{
+                        fontFamily: mailSettings.fontFamily,
+                        fontSize: mailSettings.fontSize,
+                        color: mailSettings.textColor,
+                      }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtmlForDisplay(selectedEmail.body_html) }}
                     />
                   ) : (
-                    <div className="prose prose-slate max-w-none text-slate-800 leading-relaxed whitespace-pre-wrap text-[15px] break-words">
+                    <div 
+                      className="ita-mail-content border border-slate-100 rounded-xl p-5 bg-white shadow-sm leading-relaxed whitespace-pre-wrap text-[15px] break-words"
+                      style={{
+                        fontFamily: mailSettings.fontFamily,
+                        fontSize: mailSettings.fontSize,
+                        color: mailSettings.textColor,
+                      }}
+                    >
                       {selectedEmail.body_text || selectedEmail.body || "(Ce message ne contient pas de texte)"}
                     </div>
                   )}
+
+                  {/* Section Chronologie des échanges (Discussion suivie) */}
+                  {(() => {
+                    const cleanSubj = normalizeSubject(selectedEmail.subject);
+                    if (!cleanSubj || cleanSubj === "(sans objet)") return null;
+
+                    // Tous les messages partageant le même objet
+                    const related = emails.filter((e) => {
+                      return normalizeSubject(e.subject) === cleanSubj;
+                    }).sort((a, b) => {
+                      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+                      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+                      return dateA - dateB;
+                    });
+
+                    if (related.length <= 1) return null;
+
+                    return (
+                      <div className="mt-10 pt-6 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
+                            <RotateCcw className="h-4 w-4 text-blue-600" />
+                            Chronologie de la discussion ({related.length} échanges)
+                          </h3>
+                          <span className="text-xs text-slate-400">
+                            Par ordre chronologique
+                          </span>
+                        </div>
+
+                        <div className="space-y-3">
+                          {related.map((msg, index) => {
+                            const isCurrent = msg.id === selectedEmail.id;
+                            const isExpanded = isCurrent || Boolean(expandedThreadIds[msg.id]);
+
+                            return (
+                              <div
+                                key={msg.id}
+                                className={`rounded-xl border transition-all overflow-hidden ${
+                                  isCurrent
+                                    ? "border-blue-300 bg-blue-50/30 ring-2 ring-blue-500/10"
+                                    : "border-slate-200 bg-slate-50/70 hover:border-slate-300 hover:bg-slate-50"
+                                }`}
+                              >
+                                {/* Barre d'en-tête de l'échange */}
+                                <div
+                                  onClick={() => {
+                                    if (!isCurrent) {
+                                      setExpandedThreadIds((prev) => ({
+                                        ...prev,
+                                        [msg.id]: !prev[msg.id],
+                                      }));
+                                    }
+                                  }}
+                                  className="p-3.5 flex items-center justify-between cursor-pointer select-none"
+                                >
+                                  <div className="flex items-center gap-3 min-w-0 pr-4">
+                                    <div
+                                      className={`h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs text-white flex-shrink-0 ${
+                                        msg.folder === "sent"
+                                          ? "bg-slate-700"
+                                          : "bg-blue-600"
+                                      }`}
+                                    >
+                                      {(msg.sender || "M").charAt(0).toUpperCase()}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-bold text-slate-800 truncate flex items-center gap-2">
+                                        <span>{msg.sender}</span>
+                                        <span className="text-[11px] font-normal text-slate-400">
+                                          &lt;{msg.email}&gt;
+                                        </span>
+                                        {msg.folder === "sent" && (
+                                          <span className="text-[10px] font-semibold bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
+                                            Envoyé par vous
+                                          </span>
+                                        )}
+                                        {isCurrent && (
+                                          <span className="text-[10px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded">
+                                            Message ouvert
+                                          </span>
+                                        )}
+                                      </p>
+                                      {!isExpanded && (
+                                        <p className="text-xs text-slate-500 truncate mt-0.5">
+                                          {msg.preview}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 flex-shrink-0">
+                                    <span className="text-[11px] font-medium text-slate-400">
+                                      {msg.fullDate || msg.date}
+                                    </span>
+                                    {!isCurrent && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleSelectEmail(msg);
+                                        }}
+                                        className="text-[11px] font-bold text-blue-600 hover:underline px-2 py-1 rounded bg-white border border-slate-200"
+                                      >
+                                        Ouvrir
+                                      </button>
+                                    )}
+                                    {isExpanded ? (
+                                      <ChevronUp className="h-4 w-4 text-slate-400" />
+                                    ) : (
+                                      <ChevronDown className="h-4 w-4 text-slate-400" />
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Contenu déplié du message dans le fil */}
+                                {isExpanded && !isCurrent && (
+                                  <div className="p-4 pt-2 border-t border-slate-200/80 bg-white">
+                                    <div className="text-xs text-slate-500 mb-2 pb-2 border-b border-slate-100 flex justify-between">
+                                      <span><strong>À :</strong> {msg.to}</span>
+                                      {msg.cc && msg.cc.length > 0 && <span><strong>Cc :</strong> {msg.cc.join(", ")}</span>}
+                                    </div>
+                                    {msg.body_html ? (
+                                      <div
+                                        className="text-xs text-slate-800 leading-relaxed overflow-x-auto max-h-[300px]"
+                                        dangerouslySetInnerHTML={{ __html: sanitizeHtmlForDisplay(msg.body_html) }}
+                                      />
+                                    ) : (
+                                      <div className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap max-h-[300px] overflow-y-auto">
+                                        {msg.body_text || msg.body}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Section Pièces Jointes (si disponibles) */}
                   {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
@@ -1368,20 +1645,59 @@ export default function WebmailPage() {
                     <span className="font-semibold text-slate-700">{userEmail}</span>
                   </div>
 
-                  <div className="flex px-5 py-3 border-b border-slate-100 items-center focus-within:bg-blue-50/30 transition-colors">
-                    <span className="text-sm font-medium text-slate-500 mr-2 w-8">À</span>
+                  {/* Champ À avec tags/badges sur espace ou virgule */}
+                  <div className="flex flex-wrap px-5 py-2.5 border-b border-slate-100 items-center gap-1.5 focus-within:bg-blue-50/20 transition-colors">
+                    <span className="text-sm font-medium text-slate-500 mr-2 w-6">À</span>
+                    {composeToTags.map((tag, idx) => (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-100/80 text-blue-800 rounded-full text-xs font-semibold animate-in zoom-in-95 duration-100"
+                      >
+                        {tag}
+                        <button
+                          type="button"
+                          onClick={() => setComposeToTags((prev) => prev.filter((_, i) => i !== idx))}
+                          className="text-blue-500 hover:text-blue-900 rounded-full hover:bg-blue-200/60 p-0.5"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
                     <input
                       ref={composeToInputRef}
                       type="text"
                       value={composeTo}
-                      onChange={(e) => setComposeTo(e.target.value)}
-                      placeholder="destinataires (séparés par des virgules)"
-                      className="flex-1 focus:outline-none text-sm bg-transparent placeholder-slate-400"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val.endsWith(" ") || val.endsWith(",")) {
+                          const clean = val.replace(/[,\s]+$/, "").trim();
+                          if (clean) {
+                            setComposeToTags((prev) => [...prev, clean]);
+                            setComposeTo("");
+                            return;
+                          }
+                        }
+                        setComposeTo(val);
+                      }}
+                      onKeyDown={(e) => {
+                        if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeTo.trim()) {
+                          e.preventDefault();
+                          const clean = composeTo.replace(/[,\s]+$/, "").trim();
+                          if (clean) {
+                            setComposeToTags((prev) => [...prev, clean]);
+                            setComposeTo("");
+                          }
+                        } else if (e.key === "Backspace" && !composeTo && composeToTags.length > 0) {
+                          setComposeToTags((prev) => prev.slice(0, -1));
+                        }
+                      }}
+                      placeholder={composeToTags.length === 0 ? "Écrivez une adresse puis espace ou Entrée" : "Ajouter..."}
+                      className="flex-1 min-w-[160px] focus:outline-none text-sm bg-transparent placeholder-slate-400 py-1"
                     />
                     <button
                       type="button"
                       onClick={() => setShowCcBcc(!showCcBcc)}
-                      className={`text-xs font-semibold ml-2 uppercase tracking-wider px-2 py-1 rounded ${
+                      className={`text-xs font-semibold ml-auto uppercase tracking-wider px-2 py-1 rounded ${
                         showCcBcc
                           ? "bg-blue-100 text-blue-700"
                           : "text-slate-400 hover:text-blue-600"
@@ -1393,24 +1709,103 @@ export default function WebmailPage() {
 
                   {showCcBcc && (
                     <div className="animate-in slide-in-from-top-2 duration-150">
-                      <div className="flex px-5 py-2.5 border-b border-slate-100 items-center bg-slate-50/50 focus-within:bg-blue-50/30 transition-colors">
-                        <span className="text-sm font-medium text-slate-500 mr-2 w-8">Cc</span>
+                      {/* Champ Cc avec tags */}
+                      <div className="flex flex-wrap px-5 py-2 border-b border-slate-100 items-center gap-1.5 bg-slate-50/50 focus-within:bg-blue-50/20 transition-colors">
+                        <span className="text-sm font-medium text-slate-500 mr-2 w-6">Cc</span>
+                        {composeCcTags.map((tag, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-slate-200 text-slate-800 rounded-full text-xs font-semibold"
+                          >
+                            {tag}
+                            <button
+                              type="button"
+                              onClick={() => setComposeCcTags((prev) => prev.filter((_, i) => i !== idx))}
+                              className="text-slate-500 hover:text-slate-800"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
                         <input
                           type="text"
                           value={composeCc}
-                          onChange={(e) => setComposeCc(e.target.value)}
-                          placeholder="Destinataires en copie (séparés par des virgules)"
-                          className="flex-1 focus:outline-none text-sm bg-transparent"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val.endsWith(" ") || val.endsWith(",")) {
+                              const clean = val.replace(/[,\s]+$/, "").trim();
+                              if (clean) {
+                                setComposeCcTags((prev) => [...prev, clean]);
+                                setComposeCc("");
+                                return;
+                              }
+                            }
+                            setComposeCc(val);
+                          }}
+                          onKeyDown={(e) => {
+                            if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeCc.trim()) {
+                              e.preventDefault();
+                              const clean = composeCc.replace(/[,\s]+$/, "").trim();
+                              if (clean) {
+                                setComposeCcTags((prev) => [...prev, clean]);
+                                setComposeCc("");
+                              }
+                            } else if (e.key === "Backspace" && !composeCc && composeCcTags.length > 0) {
+                              setComposeCcTags((prev) => prev.slice(0, -1));
+                            }
+                          }}
+                          placeholder={composeCcTags.length === 0 ? "Destinataires en copie (espace pour valider)" : "Ajouter Cc..."}
+                          className="flex-1 min-w-[140px] focus:outline-none text-sm bg-transparent placeholder-slate-400 py-1"
                         />
                       </div>
-                      <div className="flex px-5 py-2.5 border-b border-slate-100 items-center bg-slate-50/50 focus-within:bg-blue-50/30 transition-colors">
-                        <span className="text-sm font-medium text-slate-500 mr-2 w-8">Cci</span>
+
+                      {/* Champ Cci avec tags */}
+                      <div className="flex flex-wrap px-5 py-2 border-b border-slate-100 items-center gap-1.5 bg-slate-50/50 focus-within:bg-blue-50/20 transition-colors">
+                        <span className="text-sm font-medium text-slate-500 mr-2 w-6">Cci</span>
+                        {composeBccTags.map((tag, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-slate-200 text-slate-800 rounded-full text-xs font-semibold"
+                          >
+                            {tag}
+                            <button
+                              type="button"
+                              onClick={() => setComposeBccTags((prev) => prev.filter((_, i) => i !== idx))}
+                              className="text-slate-500 hover:text-slate-800"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
                         <input
                           type="text"
                           value={composeBcc}
-                          onChange={(e) => setComposeBcc(e.target.value)}
-                          placeholder="Destinataires en copie cachée"
-                          className="flex-1 focus:outline-none text-sm bg-transparent"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val.endsWith(" ") || val.endsWith(",")) {
+                              const clean = val.replace(/[,\s]+$/, "").trim();
+                              if (clean) {
+                                setComposeBccTags((prev) => [...prev, clean]);
+                                setComposeBcc("");
+                                return;
+                              }
+                            }
+                            setComposeBcc(val);
+                          }}
+                          onKeyDown={(e) => {
+                            if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeBcc.trim()) {
+                              e.preventDefault();
+                              const clean = composeBcc.replace(/[,\s]+$/, "").trim();
+                              if (clean) {
+                                setComposeBccTags((prev) => [...prev, clean]);
+                                setComposeBcc("");
+                              }
+                            } else if (e.key === "Backspace" && !composeBcc && composeBccTags.length > 0) {
+                              setComposeBccTags((prev) => prev.slice(0, -1));
+                            }
+                          }}
+                          placeholder={composeBccTags.length === 0 ? "Destinataires en copie cachée" : "Ajouter Cci..."}
+                          className="flex-1 min-w-[140px] focus:outline-none text-sm bg-transparent placeholder-slate-400 py-1"
                         />
                       </div>
                     </div>
@@ -1426,12 +1821,86 @@ export default function WebmailPage() {
                     />
                   </div>
 
+                  {/* Barre de style & préférences typographiques (Police, Taille, Couleur, Signature) */}
+                  <div className="flex flex-wrap items-center gap-2 px-5 py-2 bg-slate-50/70 border-b border-slate-100 text-xs">
+                    {/* Police */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-400 font-medium">Police:</span>
+                      <select
+                        value={mailSettings.fontFamily}
+                        onChange={(e) => {
+                          const updated = { ...mailSettings, fontFamily: e.target.value };
+                          setMailSettings(updated);
+                          saveMailSettingsToStorage(updated, userEmail);
+                        }}
+                        className="p-1 bg-white border border-slate-200 rounded text-xs text-slate-700 focus:outline-none focus:border-blue-500"
+                      >
+                        {AVAILABLE_FONTS.map((f) => (
+                          <option key={f.value} value={f.value}>{f.label.split(" (")[0]}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Taille */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-400 font-medium">Taille:</span>
+                      <select
+                        value={mailSettings.fontSize}
+                        onChange={(e) => {
+                          const updated = { ...mailSettings, fontSize: e.target.value };
+                          setMailSettings(updated);
+                          saveMailSettingsToStorage(updated, userEmail);
+                        }}
+                        className="p-1 bg-white border border-slate-200 rounded text-xs text-slate-700 focus:outline-none focus:border-blue-500"
+                      >
+                        {AVAILABLE_FONT_SIZES.map((s) => (
+                          <option key={s.value} value={s.value}>{s.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Couleur */}
+                    <div className="flex items-center gap-1.5 ml-1">
+                      <span className="text-slate-400 font-medium">Couleur:</span>
+                      <input
+                        type="color"
+                        value={mailSettings.textColor}
+                        onChange={(e) => {
+                          const updated = { ...mailSettings, textColor: e.target.value };
+                          setMailSettings(updated);
+                          saveMailSettingsToStorage(updated, userEmail);
+                        }}
+                        className="h-6 w-6 rounded cursor-pointer border border-slate-200 p-0 bg-transparent"
+                        title="Couleur du texte"
+                      />
+                    </div>
+
+                    {/* Insérer la signature */}
+                    {mailSettings.signature && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComposeBody((prev) => `${prev}\n\n${mailSettings.signature}`);
+                        }}
+                        className="ml-auto text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors"
+                        title="Insérer ma signature configurée"
+                      >
+                        + Insérer signature
+                      </button>
+                    )}
+                  </div>
+
                   <textarea
                     ref={composeTextareaRef}
                     value={composeBody}
                     onChange={(e) => setComposeBody(e.target.value)}
+                    style={{
+                      fontFamily: mailSettings.fontFamily,
+                      fontSize: mailSettings.fontSize,
+                      color: mailSettings.textColor,
+                    }}
                     placeholder="Rédigez votre message ici..."
-                    className="flex-1 p-5 focus:outline-none resize-none text-sm text-slate-800 leading-relaxed bg-transparent min-h-[200px]"
+                    className="flex-1 p-5 focus:outline-none resize-none text-sm leading-relaxed bg-transparent min-h-[220px]"
                   />
 
                   {/* Liste des fichiers joints avant envoi */}
@@ -1516,6 +1985,169 @@ export default function WebmailPage() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* MODALE PARAMÈTRES DU WEBMAIL */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Settings className="h-5 w-5 text-blue-400" />
+                <h3 className="font-bold text-base">Paramètres du Webmail</h3>
+              </div>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 custom-scrollbar">
+              {/* Signature */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-600 block">
+                  Signature d'e-mail
+                </label>
+                <p className="text-xs text-slate-500">
+                  Cette signature sera automatiquement insérée au bas de vos nouveaux e-mails et réponses.
+                </p>
+                <textarea
+                  value={mailSettings.signature}
+                  onChange={(e) => setMailSettings({ ...mailSettings, signature: e.target.value })}
+                  rows={3}
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono focus:bg-white focus:outline-none focus:border-blue-500"
+                  placeholder="Ex: Cordialement, Jean Dupont..."
+                />
+              </div>
+
+              {/* Typographie & Couleurs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600 block mb-1.5">
+                    Police par défaut
+                  </label>
+                  <select
+                    value={mailSettings.fontFamily}
+                    onChange={(e) => setMailSettings({ ...mailSettings, fontFamily: e.target.value })}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:border-blue-500"
+                  >
+                    {AVAILABLE_FONTS.map((font) => (
+                      <option key={font.value} value={font.value}>
+                        {font.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-600 block mb-1.5">
+                    Taille du texte
+                  </label>
+                  <select
+                    value={mailSettings.fontSize}
+                    onChange={(e) => setMailSettings({ ...mailSettings, fontSize: e.target.value })}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:border-blue-500"
+                  >
+                    {AVAILABLE_FONT_SIZES.map((sz) => (
+                      <option key={sz.value} value={sz.value}>
+                        {sz.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Couleur */}
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-600 block mb-2">
+                  Couleur du texte
+                </label>
+                <div className="flex flex-wrap items-center gap-3">
+                  {AVAILABLE_COLORS.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      onClick={() => setMailSettings({ ...mailSettings, textColor: c.value })}
+                      className={`h-7 w-7 rounded-full border-2 transition-transform flex items-center justify-center ${
+                        mailSettings.textColor === c.value
+                          ? "scale-110 border-blue-600 shadow-sm"
+                          : "border-white hover:scale-105"
+                      }`}
+                      style={{ backgroundColor: c.value }}
+                      title={c.label}
+                    />
+                  ))}
+                  <div className="flex items-center gap-2 pl-3 border-l border-slate-200">
+                    <input
+                      type="color"
+                      value={mailSettings.textColor}
+                      onChange={(e) => setMailSettings({ ...mailSettings, textColor: e.target.value })}
+                      className="h-7 w-7 rounded-lg cursor-pointer border border-slate-200 p-0"
+                    />
+                    <span className="text-xs font-mono text-slate-500">{mailSettings.textColor}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Aperçu en direct */}
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                  Aperçu du rendu
+                </span>
+                <div
+                  style={{
+                    fontFamily: mailSettings.fontFamily,
+                    fontSize: mailSettings.fontSize,
+                    color: mailSettings.textColor,
+                    lineHeight: "1.6",
+                  }}
+                  className="whitespace-pre-wrap break-words bg-white p-3 rounded-lg border border-slate-200"
+                >
+                  Bonjour,<br />
+                  Ceci est un exemple montrant exactement l'apparence de vos courriels avec vos préférences.<br />
+                  {mailSettings.signature}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 px-6 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  setMailSettings(DEFAULT_MAIL_SETTINGS);
+                  saveMailSettingsToStorage(DEFAULT_MAIL_SETTINGS, userEmail);
+                  showToast("Paramètres réinitialisés par défaut");
+                }}
+                className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+              >
+                Réinitialiser par défaut
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Fermer
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    saveMailSettingsToStorage(mailSettings, userEmail);
+                    setShowSettingsModal(false);
+                    showToast("Paramètres enregistrés avec succès");
+                  }}
+                  className="px-5 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 shadow-sm"
+                >
+                  Enregistrer
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
