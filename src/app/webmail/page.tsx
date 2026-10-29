@@ -339,6 +339,8 @@ export default function WebmailPage() {
   const [activeTabFilter, setActiveTabFilter] = useState<"all" | "unread" | "starred">("all");
   const [inboxCategory, setInboxCategory] = useState<"principale" | "promotions" | "social" | "notifications">("principale");
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+  const [selectedThreadKeys, setSelectedThreadKeys] = useState<string[]>([]);
+  const [showSelectDropdown, setShowSelectDropdown] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState<EmailItem | null>(null);
   const [isLoadingEmailBody, setIsLoadingEmailBody] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -1086,6 +1088,210 @@ export default function WebmailPage() {
     showToast(nextRead ? "Discussion marquée comme lue" : "Discussion marquée comme non lue");
   };
 
+  // Sélection / Désélection d'un fil
+  const toggleSelectThread = (threadKey: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedThreadKeys((prev) =>
+      prev.includes(threadKey) ? prev.filter((k) => k !== threadKey) : [...prev, threadKey]
+    );
+  };
+
+  // Sélectionner tous les fils visibles
+  const selectAllVisibleThreads = () => {
+    const allKeys = threads.map((t) => t.threadKey);
+    setSelectedThreadKeys(allKeys);
+    setShowSelectDropdown(false);
+  };
+
+  // Tout désélectionner
+  const deselectAllThreads = () => {
+    setSelectedThreadKeys([]);
+    setShowSelectDropdown(false);
+  };
+
+  // Sélectionner selon filtre (Lus, Non lus, Suivis)
+  const selectThreadsByFilter = (filter: "read" | "unread" | "starred") => {
+    let matching: string[] = [];
+    if (filter === "read") {
+      matching = threads.filter((t) => !t.unread).map((t) => t.threadKey);
+    } else if (filter === "unread") {
+      matching = threads.filter((t) => t.unread).map((t) => t.threadKey);
+    } else if (filter === "starred") {
+      matching = threads.filter((t) => t.starred).map((t) => t.threadKey);
+    }
+    setSelectedThreadKeys(matching);
+    setShowSelectDropdown(false);
+  };
+
+  // Action groupée : Supprimer
+  const handleBatchDelete = async () => {
+    if (selectedThreadKeys.length === 0) return;
+    const targetThreads = threads.filter((t) => selectedThreadKeys.includes(t.threadKey));
+    const allMsgIds = targetThreads.flatMap((t) => t.messages.map((m) => m.id));
+    const targetFolder = activeFolder === "trash" ? "deleted" : "trash";
+
+    // Mise à jour optimiste
+    if (targetFolder === "deleted") {
+      setEmails((prev) => prev.filter((m) => !allMsgIds.includes(m.id)));
+    } else {
+      setEmails((prev) =>
+        prev.map((m) => (allMsgIds.includes(m.id) ? { ...m, folder: "trash" } : m))
+      );
+    }
+
+    const count = targetThreads.length;
+    deselectAllThreads();
+    showToast(
+      targetFolder === "deleted"
+        ? `${count} discussion(s) supprimée(s) définitivement`
+        : `${count} discussion(s) placée(s) dans la corbeille`
+    );
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.from("messages").update({ folder: targetFolder }).in("id", allMsgIds);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Action groupée : Archiver
+  const handleBatchArchive = async () => {
+    if (selectedThreadKeys.length === 0) return;
+    const targetThreads = threads.filter((t) => selectedThreadKeys.includes(t.threadKey));
+    const allMsgIds = targetThreads.flatMap((t) => t.messages.map((m) => m.id));
+
+    setEmails((prev) =>
+      prev.map((m) => (allMsgIds.includes(m.id) ? { ...m, folder: "folders" } : m))
+    );
+
+    const count = targetThreads.length;
+    deselectAllThreads();
+    showToast(`${count} discussion(s) archivée(s)`);
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.from("messages").update({ folder: "folders" }).in("id", allMsgIds);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Action groupée : Signaler comme spam
+  const handleBatchSpam = async () => {
+    if (selectedThreadKeys.length === 0) return;
+    const targetThreads = threads.filter((t) => selectedThreadKeys.includes(t.threadKey));
+    const allMsgIds = targetThreads.flatMap((t) => t.messages.map((m) => m.id));
+    const targetFolder = activeFolder === "spams" ? "inbox" : "spams";
+
+    setEmails((prev) =>
+      prev.map((m) => (allMsgIds.includes(m.id) ? { ...m, folder: targetFolder } : m))
+    );
+
+    const count = targetThreads.length;
+    deselectAllThreads();
+    showToast(
+      targetFolder === "inbox"
+        ? `${count} discussion(s) restaurée(s)`
+        : `${count} discussion(s) signalée(s) comme spam`
+    );
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.from("messages").update({ folder: targetFolder }).in("id", allMsgIds);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Action groupée : Marquer comme lu
+  const handleBatchMarkRead = async () => {
+    if (selectedThreadKeys.length === 0) return;
+    const targetThreads = threads.filter((t) => selectedThreadKeys.includes(t.threadKey));
+    const allMsgIds = targetThreads.flatMap((t) => t.messages.map((m) => m.id));
+
+    setEmails((prev) =>
+      prev.map((m) => (allMsgIds.includes(m.id) ? { ...m, read: true } : m))
+    );
+
+    const count = targetThreads.length;
+    deselectAllThreads();
+    showToast(`${count} discussion(s) marquée(s) comme lue(s)`);
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.from("messages").update({ is_read: true }).in("id", allMsgIds);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Action groupée : Marquer comme non lu
+  const handleBatchMarkUnread = async () => {
+    if (selectedThreadKeys.length === 0) return;
+    const targetThreads = threads.filter((t) => selectedThreadKeys.includes(t.threadKey));
+    const allMsgIds = targetThreads.flatMap((t) => t.messages.map((m) => m.id));
+
+    setEmails((prev) =>
+      prev.map((m) => (allMsgIds.includes(m.id) ? { ...m, read: false } : m))
+    );
+
+    const count = targetThreads.length;
+    deselectAllThreads();
+    showToast(`${count} discussion(s) marquée(s) comme non lue(s)`);
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      await supabase.from("messages").update({ is_read: false }).in("id", allMsgIds);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Action groupée : Suivre / Ne plus suivre
+  const handleBatchStar = async () => {
+    if (selectedThreadKeys.length === 0) return;
+    const targetThreads = threads.filter((t) => selectedThreadKeys.includes(t.threadKey));
+    const anyUnstarred = targetThreads.some((t) => !t.starred);
+    const nextStarred = anyUnstarred;
+
+    const allMsgIds = targetThreads.flatMap((t) => t.messages.map((m) => m.id));
+
+    setEmails((prev) =>
+      prev.map((m) => (allMsgIds.includes(m.id) ? { ...m, starred: nextStarred } : m))
+    );
+
+    const count = targetThreads.length;
+    deselectAllThreads();
+    showToast(nextStarred ? `${count} discussion(s) suivie(s)` : `${count} discussion(s) non suivie(s)`);
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      targetThreads.forEach((t) => {
+        t.messages.forEach(async (m) => {
+          const { data: dbMsg } = await supabase
+            .from("messages")
+            .select("body_html")
+            .eq("id", m.id)
+            .single();
+          const currentHtml = dbMsg?.body_html || m.body_html || "";
+          const { cleanHtml, meta } = parseMetaFromHtml(currentHtml);
+          const updatedMeta = { ...(meta || {}), starred: nextStarred };
+          const newBodyHtml = buildHtmlWithMeta(cleanHtml, updatedMeta);
+          await supabase.from("messages").update({ body_html: newBodyHtml }).eq("id", m.id);
+        });
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   // Enregistrer en brouillon
   const handleSaveDraft = async () => {
     const finalTo = [
@@ -1652,66 +1858,335 @@ ${composeBody}
                 </div>
               )}
 
-              {/* Sous-barre d'outils (Checkbox, Actualiser, Plus, Filtres rapides, Pagination) */}
-              <div className="h-12 px-4 border-b border-slate-100 flex items-center justify-between bg-white text-slate-600 text-xs flex-shrink-0 select-none">
-                <div className="flex items-center gap-1.5">
-                  <div className="flex items-center p-1.5 hover:bg-slate-100 rounded cursor-pointer text-slate-500">
-                    <div className="h-4 w-4 border border-slate-300 rounded-xs" />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => fetchMessages(userEmail || "")}
-                    className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
-                    title="Actualiser"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
-                  </button>
-                  <button
-                    type="button"
-                    className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
-                    title="Autres options"
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </button>
+              {/* Sous-barre d'outils dynamique (Mode sélection groupée vs standard style Gmail) */}
+              <div
+                className={`h-12 px-4 border-b border-slate-100 flex items-center justify-between text-xs flex-shrink-0 select-none transition-colors ${
+                  selectedThreadKeys.length > 0 ? "bg-[#e8f0fe] text-slate-700" : "bg-white text-slate-600"
+                }`}
+              >
+                {selectedThreadKeys.length > 0 ? (
+                  /* Barre d'actions groupées style Gmail */
+                  <div className="flex items-center gap-1 sm:gap-2 w-full justify-between">
+                    <div className="flex items-center gap-1 sm:gap-1.5">
+                      {/* Checkbox maître avec dropdown */}
+                      <div className="relative flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (selectedThreadKeys.length === threads.length) {
+                              deselectAllThreads();
+                            } else {
+                              selectAllVisibleThreads();
+                            }
+                          }}
+                          className="p-1.5 hover:bg-black/5 rounded cursor-pointer text-slate-700 flex items-center"
+                          title={selectedThreadKeys.length === threads.length ? "Tout désélectionner" : "Tout sélectionner"}
+                        >
+                          <div
+                            className={`h-4 w-4 rounded-xs border flex items-center justify-center transition-colors ${
+                              selectedThreadKeys.length === threads.length
+                                ? "bg-blue-600 border-blue-600 text-white"
+                                : "bg-blue-600 border-blue-600 text-white"
+                            }`}
+                          >
+                            {selectedThreadKeys.length === threads.length ? (
+                              <Check className="h-3 w-3 stroke-[3]" />
+                            ) : (
+                              <Minus className="h-3 w-3 stroke-[3]" />
+                            )}
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowSelectDropdown((prev) => !prev);
+                          }}
+                          className="p-1 hover:bg-black/5 rounded cursor-pointer text-slate-600 ml-0.5"
+                          title="Options de sélection"
+                        >
+                          <ChevronDown className="h-3 w-3" />
+                        </button>
 
-                  {/* Filtres rapides : Tous, Non lus, Favoris */}
-                  <div className="flex items-center bg-slate-100 p-0.5 rounded-lg ml-2">
+                        {/* Dropdown de sélection */}
+                        {showSelectDropdown && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-20"
+                              onClick={() => setShowSelectDropdown(false)}
+                            />
+                            <div
+                              className="absolute top-full left-0 mt-1 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-30 text-xs text-slate-700"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                onClick={selectAllVisibleThreads}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center justify-between"
+                              >
+                                <span>Tous</span>
+                                <span className="text-[10px] text-slate-400">({threads.length})</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={deselectAllThreads}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100"
+                              >
+                                Aucun
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => selectThreadsByFilter("read")}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center justify-between"
+                              >
+                                <span>Lus</span>
+                                <span className="text-[10px] text-slate-400">
+                                  ({threads.filter((t) => !t.unread).length})
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => selectThreadsByFilter("unread")}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center justify-between"
+                              >
+                                <span>Non lus</span>
+                                <span className="text-[10px] text-slate-400">
+                                  ({threads.filter((t) => t.unread).length})
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => selectThreadsByFilter("starred")}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center justify-between"
+                              >
+                                <span>Suivis</span>
+                                <span className="text-[10px] text-slate-400">
+                                  ({threads.filter((t) => t.starred).length})
+                                </span>
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="h-4 w-px bg-slate-300 mx-1 hidden sm:block" />
+
+                      {/* Compteur de sélection */}
+                      <span className="font-semibold text-slate-800 text-xs mr-2">
+                        {selectedThreadKeys.length} sélectionné{selectedThreadKeys.length > 1 ? "s" : ""}
+                      </span>
+
+                      {/* Actions groupées */}
+                      <button
+                        type="button"
+                        onClick={handleBatchArchive}
+                        className="p-2 hover:bg-black/5 rounded-full text-slate-700 transition-colors"
+                        title="Archiver"
+                      >
+                        <Archive className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleBatchSpam}
+                        className="p-2 hover:bg-black/5 rounded-full text-slate-700 transition-colors"
+                        title="Signaler comme spam"
+                      >
+                        <AlertOctagon className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleBatchDelete}
+                        className="p-2 hover:bg-red-100 text-slate-700 hover:text-red-600 rounded-full transition-colors"
+                        title={activeFolder === "trash" ? "Supprimer définitivement" : "Supprimer (Corbeille)"}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+
+                      <div className="h-4 w-px bg-slate-300 mx-1 hidden sm:block" />
+
+                      <button
+                        type="button"
+                        onClick={handleBatchMarkRead}
+                        className="p-2 hover:bg-black/5 rounded-full text-slate-700 transition-colors"
+                        title="Marquer comme lu"
+                      >
+                        <MailOpen className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleBatchMarkUnread}
+                        className="p-2 hover:bg-black/5 rounded-full text-slate-700 transition-colors"
+                        title="Marquer comme non lu"
+                      >
+                        <Mail className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleBatchStar}
+                        className="p-2 hover:bg-black/5 rounded-full text-slate-700 transition-colors"
+                        title="Suivre / Ne plus suivre"
+                      >
+                        <Star className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {/* Annuler sélection */}
                     <button
                       type="button"
-                      onClick={() => setActiveTabFilter("all")}
-                      className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
-                        activeTabFilter === "all" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-700"
-                      }`}
+                      onClick={deselectAllThreads}
+                      className="p-2 hover:bg-black/5 rounded-full text-slate-600 hover:text-slate-900 transition-colors"
+                      title="Annuler la sélection"
                     >
-                      Tous
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTabFilter("unread")}
-                      className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
-                        activeTabFilter === "unread" ? "bg-white text-blue-600 shadow-2xs" : "text-slate-500 hover:text-slate-700"
-                      }`}
-                    >
-                      Non lus
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTabFilter("starred")}
-                      className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
-                        activeTabFilter === "starred" ? "bg-white text-amber-600 shadow-2xs" : "text-slate-500 hover:text-slate-700"
-                      }`}
-                    >
-                      ★
+                      <X className="h-4 w-4" />
                     </button>
                   </div>
-                </div>
+                ) : (
+                  /* Toolbar standard */
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      {/* Checkbox maître avec dropdown */}
+                      <div className="relative flex items-center">
+                        <button
+                          type="button"
+                          onClick={selectAllVisibleThreads}
+                          className="p-1.5 hover:bg-slate-100 rounded cursor-pointer text-slate-500 flex items-center"
+                          title="Tout sélectionner"
+                        >
+                          <div className="h-4 w-4 border border-slate-300 rounded-xs group-hover:border-slate-500" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowSelectDropdown((prev) => !prev);
+                          }}
+                          className="p-1 hover:bg-slate-100 rounded cursor-pointer text-slate-500 ml-0.5"
+                          title="Options de sélection"
+                        >
+                          <ChevronDown className="h-3 w-3" />
+                        </button>
 
-                {/* Pagination */}
-                <div className="flex items-center gap-3 text-slate-500 font-medium">
-                  <span>
-                    {threads.length === 0 ? "0 discussion" : `1-${threads.length} sur ${threads.length}`}
-                  </span>
-                </div>
+                        {/* Dropdown de sélection */}
+                        {showSelectDropdown && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-20"
+                              onClick={() => setShowSelectDropdown(false)}
+                            />
+                            <div
+                              className="absolute top-full left-0 mt-1 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-30 text-xs text-slate-700"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                onClick={selectAllVisibleThreads}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center justify-between"
+                              >
+                                <span>Tous</span>
+                                <span className="text-[10px] text-slate-400">({threads.length})</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={deselectAllThreads}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100"
+                              >
+                                Aucun
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => selectThreadsByFilter("read")}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center justify-between"
+                              >
+                                <span>Lus</span>
+                                <span className="text-[10px] text-slate-400">
+                                  ({threads.filter((t) => !t.unread).length})
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => selectThreadsByFilter("unread")}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center justify-between"
+                              >
+                                <span>Non lus</span>
+                                <span className="text-[10px] text-slate-400">
+                                  ({threads.filter((t) => t.unread).length})
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => selectThreadsByFilter("starred")}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center justify-between"
+                              >
+                                <span>Suivis</span>
+                                <span className="text-[10px] text-slate-400">
+                                  ({threads.filter((t) => t.starred).length})
+                                </span>
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => fetchMessages(userEmail || "")}
+                        className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
+                        title="Actualiser"
+                      >
+                        <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
+                      </button>
+                      <button
+                        type="button"
+                        className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
+                        title="Autres options"
+                      >
+                        <MoreVertical className="h-4 w-4" />
+                      </button>
+
+                      {/* Filtres rapides : Tous, Non lus, Favoris */}
+                      <div className="flex items-center bg-slate-100 p-0.5 rounded-lg ml-2">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTabFilter("all")}
+                          className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                            activeTabFilter === "all" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-700"
+                          }`}
+                        >
+                          Tous
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTabFilter("unread")}
+                          className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                            activeTabFilter === "unread" ? "bg-white text-blue-600 shadow-2xs" : "text-slate-500 hover:text-slate-700"
+                          }`}
+                        >
+                          Non lus
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTabFilter("starred")}
+                          className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                            activeTabFilter === "starred" ? "bg-white text-amber-600 shadow-2xs" : "text-slate-500 hover:text-slate-700"
+                          }`}
+                        >
+                          ★
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Pagination */}
+                    <div className="flex items-center gap-3 text-slate-500 font-medium">
+                      <span>
+                        {threads.length === 0 ? "0 discussion" : `1-${threads.length} sur ${threads.length}`}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Liste des discussions (Lignes complètes style Gmail) */}
@@ -1727,12 +2202,15 @@ ${composeBody}
                 ) : (
                   threads.map((thread) => {
                     const isUnread = thread.unread;
+                    const isSelected = selectedThreadKeys.includes(thread.threadKey);
                     return (
                       <div
                         key={thread.threadKey}
                         onClick={() => handleSelectThread(thread)}
                         className={`flex items-center px-4 py-2.5 cursor-pointer transition-colors relative group select-none ${
-                          isUnread
+                          isSelected
+                            ? "bg-[#c2e7ff]/40 text-slate-900"
+                            : isUnread
                             ? "bg-white font-bold text-slate-900"
                             : "bg-[#f2f6fc]/40 text-[#444746] hover:bg-slate-50/90"
                         }`}
@@ -1742,7 +2220,22 @@ ${composeBody}
                           className="flex items-center gap-2 mr-3 flex-shrink-0"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="h-4 w-4 border border-slate-300 rounded-xs group-hover:border-slate-500" />
+                          <button
+                            type="button"
+                            onClick={(e) => toggleSelectThread(thread.threadKey, e)}
+                            className="p-1 hover:bg-slate-200/60 rounded cursor-pointer transition-colors"
+                            title={isSelected ? "Désélectionner" : "Sélectionner"}
+                          >
+                            <div
+                              className={`h-4 w-4 rounded-xs border flex items-center justify-center transition-colors ${
+                                isSelected
+                                  ? "bg-blue-600 border-blue-600 text-white"
+                                  : "border-slate-300 group-hover:border-slate-500 bg-white"
+                              }`}
+                            >
+                              {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                            </div>
+                          </button>
                           <button
                             type="button"
                             onClick={(e) => handleToggleStarThread(thread, e)}
