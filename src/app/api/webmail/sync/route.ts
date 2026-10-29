@@ -78,6 +78,7 @@ async function handleSync(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     let targetMessageId = searchParams.get('messageId');
+    let customApiKey = searchParams.get('apiKey');
     let targetEmailAddress = searchParams.get('email');
 
     // Lire aussi le body JSON si disponible
@@ -86,10 +87,11 @@ async function handleSync(request: Request) {
         const body = await request.clone().json();
         if (body.messageId) targetMessageId = body.messageId;
         if (body.email) targetEmailAddress = body.email;
+        if (body.apiKey) customApiKey = body.apiKey;
       } catch {}
     }
 
-    const resendApiKey = process.env.RESEND_API_KEY;
+    const resendApiKey = customApiKey || process.env.RESEND_API_KEY;
     const maskedKey = resendApiKey
       ? `${resendApiKey.slice(0, 7)}...${resendApiKey.slice(-4)}`
       : null;
