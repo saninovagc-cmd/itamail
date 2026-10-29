@@ -182,6 +182,7 @@ export default function WebmailPage() {
   const [selectedEmail, setSelectedEmail] = useState<EmailItem | null>(null);
   const [isLoadingEmailBody, setIsLoadingEmailBody] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSyncingContent, setIsSyncingContent] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
   const [composerTitle, setComposerTitle] = useState("Nouveau message");
   const [editingDraftId, setEditingDraftId] = useState<string | number | null>(null);
@@ -283,6 +284,21 @@ export default function WebmailPage() {
             const updatedSelected = formattedMsgs.find((item) => item.id === selectedEmail.id);
             if (updatedSelected) setSelectedEmail(updatedSelected);
           }
+
+          // Détecter s'il y a des e-mails en boîte de réception sans corps et lancer la synchronisation automatique
+          const hasEmptyInbox = formattedMsgs.some(
+            (m) => m.folder === "inbox" && !m.body_text && !m.body_html
+          );
+          if (hasEmptyInbox && !silent) {
+            fetch(`/api/webmail/sync?email=${encodeURIComponent(savedEmail)}`, { method: "POST" })
+              .then((r) => r.json())
+              .then((syncRes) => {
+                if (syncRes.synced_total > 0) {
+                  fetchMessages(savedEmail, true);
+                }
+              })
+              .catch((err) => console.warn("Auto-sync background err:", err));
+          }
         } else {
           setEmails([]);
           setSelectedEmail(null);
@@ -292,6 +308,39 @@ export default function WebmailPage() {
       console.error("Erreur de chargement des messages:", e);
     } finally {
       setIsRefreshing(false);
+    }
+  };
+
+  // Forcer la synchronisation manuelle d'un message spécifique avec Resend
+  const handleForceSyncEmail = async (email: EmailItem) => {
+    try {
+      setIsSyncingContent(true);
+      showToast("Synchronisation du message avec le serveur...");
+      const res = await fetch(`/api/webmail/sync?messageId=${encodeURIComponent(email.id)}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (data.success && data.synced_total > 0) {
+        showToast("Contenu intégral récupéré avec succès !");
+        const savedEmail = userEmail || localStorage.getItem("webmail_user");
+        if (savedEmail) {
+          await fetchMessages(savedEmail, true);
+        }
+      } else if (data.results?.[0]?.status === "failed") {
+        const errDetail = data.results[0].email_error || `Status HTTP ${data.results[0].email_status}`;
+        showToast(`Erreur serveur Resend: ${errDetail}`);
+      } else {
+        showToast("Synchronisation terminée.");
+        const savedEmail = userEmail || localStorage.getItem("webmail_user");
+        if (savedEmail) {
+          await fetchMessages(savedEmail, true);
+        }
+      }
+    } catch (e: any) {
+      console.error("Erreur force sync:", e);
+      showToast("Erreur lors de la synchronisation.");
+    } finally {
+      setIsSyncingContent(false);
     }
   };
 
@@ -1297,6 +1346,15 @@ ${composeBody}
                 <div className="flex-1" />
 
                 <button
+                  onClick={() => handleForceSyncEmail(selectedEmail)}
+                  disabled={isSyncingContent}
+                  className="p-2 text-slate-500 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  title="Actualiser et récupérer le contenu intégral"
+                >
+                  <RefreshCw className={`h-4 w-4 ${isSyncingContent ? "animate-spin text-blue-600" : ""}`} />
+                </button>
+
+                <button
                   onClick={() => handlePrintEmail(selectedEmail)}
                   className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
                   title="Imprimer l'e-mail"
@@ -1376,7 +1434,22 @@ ${composeBody}
                         color: mailSettings.textColor,
                       }}
                     >
-                      {selectedEmail.body_text || selectedEmail.body || "(Ce message ne contient pas de texte)"}
+                      {selectedEmail.body_text || selectedEmail.body || (
+                        <div className="py-4 flex flex-col items-start gap-3">
+                          <p className="italic text-slate-400 text-sm">
+                            (Ce message ne contient pas de texte préchargé)
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => handleForceSyncEmail(selectedEmail)}
+                            disabled={isSyncingContent}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+                          >
+                            <RefreshCw className={`h-3.5 w-3.5 ${isSyncingContent ? "animate-spin" : ""}`} />
+                            {isSyncingContent ? "Récupération en cours..." : "Actualiser et charger le contenu intégral"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 

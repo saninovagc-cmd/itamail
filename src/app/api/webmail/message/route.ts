@@ -14,6 +14,50 @@ function parseMeta(rawHtml: string | null | undefined) {
   }
 }
 
+function extractFromRawEml(rawContent: string): { text: string; html: string } {
+  let text = '';
+  let html = '';
+  try {
+    if (rawContent.includes('Content-Type: text/html')) {
+      const htmlParts = rawContent.split(/Content-Type:\s*text\/html[^\r\n]*/i);
+      if (htmlParts.length > 1) {
+        const afterHeader = htmlParts[1].replace(/^[^\r\n]*\r?\n\r?\n/, '');
+        const boundaryMatch = rawContent.match(/boundary="?([^"\r\n]+)"?/i);
+        if (boundaryMatch) {
+          html = afterHeader.split(new RegExp(`--${boundaryMatch[1]}`, 'g'))[0].trim();
+        } else {
+          html = afterHeader.split(/\r?\n--/)[0].trim();
+        }
+      }
+    }
+    if (rawContent.includes('Content-Type: text/plain')) {
+      const textParts = rawContent.split(/Content-Type:\s*text\/plain[^\r\n]*/i);
+      if (textParts.length > 1) {
+        const afterHeader = textParts[1].replace(/^[^\r\n]*\r?\n\r?\n/, '');
+        const boundaryMatch = rawContent.match(/boundary="?([^"\r\n]+)"?/i);
+        if (boundaryMatch) {
+          text = afterHeader.split(new RegExp(`--${boundaryMatch[1]}`, 'g'))[0].trim();
+        } else {
+          text = afterHeader.split(/\r?\n--/)[0].trim();
+        }
+      }
+    }
+    const decodeQP = (str: string) =>
+      str.replace(/=([0-9A-F]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+         .replace(/=\r?\n/g, '');
+
+    if (html.includes('=\n') || html.includes('=\r\n') || /=([0-9A-F]{2})/i.test(html)) {
+      html = decodeQP(html);
+    }
+    if (text.includes('=\n') || text.includes('=\r\n') || /=([0-9A-F]{2})/i.test(text)) {
+      text = decodeQP(text);
+    }
+  } catch (e) {
+    console.error('[Webmail Message API] Erreur extraction raw EML:', e);
+  }
+  return { text, html };
+}
+
 // POST: Ouvrir un e-mail, marquer comme lu, et récupérer le corps / les pièces jointes depuis Resend si nécessaire
 export async function POST(request: Request) {
   try {
@@ -90,27 +134,56 @@ export async function POST(request: Request) {
           const needBody = !text && !html;
           const needAttachments = needBody || attachments.length > 0;
 
-          const [emailRes, attRes] = await Promise.all([
-            needBody
-              ? fetch(`https://api.resend.com/emails/receiving/${resendId}`, {
-                  method: 'GET',
-                  headers: { 'Authorization': `Bearer ${resendApiKey}` },
-                })
-              : Promise.resolve(null),
-            needAttachments
-              ? fetch(`https://api.resend.com/emails/receiving/${resendId}/attachments`, {
-                  method: 'GET',
-                  headers: { 'Authorization': `Bearer ${resendApiKey}` },
-                })
-              : Promise.resolve(null),
-          ]);
+          let emailRes: Response | null = null;
+          let attRes: Response | null = null;
+
+          if (needBody) {
+            try {
+              emailRes = await fetch(`https://api.resend.com/emails/receiving/${resendId}`, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${resendApiKey}` },
+              });
+            } catch (e) {
+              console.error('[Webmail Message API] Erreur fetch email body:', e);
+            }
+          }
+
+          if (needAttachments) {
+            try {
+              attRes = await fetch(`https://api.resend.com/emails/receiving/${resendId}/attachments`, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${resendApiKey}` },
+              });
+            } catch (e) {
+              console.error('[Webmail Message API] Erreur fetch attachments:', e);
+            }
+          }
 
           let shouldUpdateDb = false;
 
           if (emailRes && emailRes.ok) {
             const fullEmail = await emailRes.json();
-            text = fullEmail.text || text || '';
-            html = fullEmail.html || html || '';
+            let fetchedText = fullEmail.text || '';
+            let fetchedHtml = fullEmail.html || '';
+
+            // Secours si text & html sont vides mais raw download_url existe
+            if (!fetchedText && !fetchedHtml && fullEmail.raw?.download_url) {
+              try {
+                const rawRes = await fetch(fullEmail.raw.download_url);
+                if (rawRes.ok) {
+                  const rawEml = await rawRes.text();
+                  const extracted = extractFromRawEml(rawEml);
+                  fetchedText = extracted.text;
+                  fetchedHtml = extracted.html;
+                }
+              } catch (rawErr) {
+                console.error('[Webmail Message API] Erreur raw download_url:', rawErr);
+              }
+            }
+
+            if (fetchedText) text = fetchedText;
+            if (fetchedHtml) html = fetchedHtml;
+
             if (Array.isArray(fullEmail.cc) && fullEmail.cc.length > 0) {
               ccList = fullEmail.cc;
             }
