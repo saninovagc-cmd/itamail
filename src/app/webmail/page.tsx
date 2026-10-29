@@ -32,7 +32,19 @@ import {
   Settings,
   ChevronDown,
   ChevronUp,
-  Palette
+  Palette,
+  Menu,
+  MoreVertical,
+  Check,
+  Maximize2,
+  Minimize2,
+  Minus,
+  SlidersHorizontal,
+  ArrowLeft,
+  ShieldCheck,
+  Eye,
+  Info,
+  ExternalLink
 } from "lucide-react";
 import Link from "next/link";
 import { 
@@ -175,17 +187,43 @@ function formatFullDate(dateStr: string): string {
   }
 }
 
+function getAvatarColor(identifier: string): string {
+  const colors = [
+    "bg-red-500 text-white",
+    "bg-blue-600 text-white",
+    "bg-emerald-600 text-white",
+    "bg-amber-600 text-white",
+    "bg-purple-600 text-white",
+    "bg-teal-600 text-white",
+    "bg-indigo-600 text-white",
+    "bg-pink-600 text-white",
+  ];
+  if (!identifier) return colors[0];
+  let hash = 0;
+  for (let i = 0; i < identifier.length; i++) {
+    hash = identifier.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % colors.length;
+  return colors[index];
+}
+
 export default function WebmailPage() {
   const [emails, setEmails] = useState<EmailItem[]>([]);
   const [mailboxId, setMailboxId] = useState<string | null>(null);
   const [activeFolder, setActiveFolder] = useState("inbox");
+  const [activeTabFilter, setActiveTabFilter] = useState<"all" | "unread" | "starred">("all");
   const [selectedEmail, setSelectedEmail] = useState<EmailItem | null>(null);
   const [isLoadingEmailBody, setIsLoadingEmailBody] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSyncingContent, setIsSyncingContent] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
+  const [composerMinimized, setComposerMinimized] = useState(false);
+  const [composerMaximized, setComposerMaximized] = useState(false);
   const [composerTitle, setComposerTitle] = useState("Nouveau message");
   const [editingDraftId, setEditingDraftId] = useState<string | number | null>(null);
+  const [showAccountDropdown, setShowAccountDropdown] = useState(false);
+  const [showEmailDetailsModal, setShowEmailDetailsModal] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isClient, setIsClient] = useState(false);
@@ -941,11 +979,20 @@ ${composeBody}
 
   // Compteurs dynamiques par dossier
   const unreadInboxCount = emails.filter((e) => e.folder === "inbox" && !e.read).length;
+  const starredCount = emails.filter((e) => e.starred).length;
   const draftsCount = emails.filter((e) => e.folder === "drafts").length;
   const spamsCount = emails.filter((e) => e.folder === "spams" && !e.read).length;
 
   const filteredEmails = emails.filter((e) => {
-    if (e.folder !== activeFolder) return false;
+    if (activeFolder === "starred") {
+      if (!e.starred) return false;
+    } else if (e.folder !== activeFolder) {
+      return false;
+    }
+
+    if (activeTabFilter === "unread" && e.read) return false;
+    if (activeTabFilter === "starred" && !e.starred) return false;
+
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -960,303 +1007,512 @@ ${composeBody}
   if (!isClient || !userEmail) return null;
 
   return (
-    <div className="h-screen flex flex-col bg-[#F8FAFC] overflow-hidden font-sans text-slate-800 selection:bg-blue-100 selection:text-blue-900">
+    <div className="h-screen flex flex-col bg-[#f6f8fc] overflow-hidden font-sans text-slate-800 selection:bg-blue-100 selection:text-blue-900">
       {/* Notification Toast */}
       {toastMessage && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 animate-in fade-in slide-in-from-bottom-4 duration-200">
-          <CheckCircle className="h-4 w-4 text-emerald-400" />
-          {toastMessage}
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-[#202124] text-white px-5 py-3 rounded-xl shadow-2xl text-sm font-medium flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-4 duration-200 border border-slate-700">
+          <CheckCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+          <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* HEADER PREMIUM */}
-      <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/60 flex items-center justify-between px-6 flex-shrink-0 z-20">
-        <div className="flex items-center gap-3 w-64">
-          <div className="bg-gradient-to-br from-blue-600 to-indigo-600 text-white p-1.5 rounded-lg shadow-sm">
-            <Mail className="h-5 w-5" />
+      {/* HEADER GMAIL STYLE */}
+      <header className="h-16 bg-[#f6f8fc] px-4 flex items-center justify-between flex-shrink-0 z-20">
+        {/* Brand & Menu */}
+        <div className="flex items-center gap-2 w-64">
+          <button 
+            type="button"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="p-2.5 rounded-full text-slate-600 hover:bg-slate-200/70 transition-colors"
+            title="Menu principal"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div 
+            onClick={() => { setActiveFolder("inbox"); setSelectedEmail(null); }}
+            className="flex items-center gap-2.5 pl-1 cursor-pointer select-none"
+          >
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-700 flex items-center justify-center text-white shadow-xs">
+              <Mail className="h-5 w-5" />
+            </div>
+            <div className="flex items-baseline">
+              <span className="text-xl font-bold tracking-tight text-[#1f1f1f]">ITA</span>
+              <span className="text-xl font-medium tracking-tight text-[#5f6368] ml-1">Mail</span>
+            </div>
           </div>
-          <span className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-700 tracking-tight">
-            ITA Webmail
-          </span>
         </div>
 
-        <div className="flex-1 max-w-2xl mx-8">
-          <div className="relative group">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+        {/* Floating Google Search Bar */}
+        <div className="flex-1 max-w-2xl mx-4">
+          <div className="relative flex items-center bg-[#eaf1fb] hover:bg-[#e1eaf5] focus-within:bg-white focus-within:shadow-md focus-within:ring-1 focus-within:ring-blue-200 rounded-full h-12 px-4 transition-all duration-200">
+            <Search className="h-5 w-5 text-slate-500 mr-3 flex-shrink-0" />
             <input
               type="text"
-              placeholder="Rechercher un message, un contact, un contenu..."
+              placeholder="Rechercher dans les messages..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-8 py-2 bg-slate-100/70 hover:bg-slate-100 focus:bg-white border border-transparent focus:border-blue-200 focus:ring-4 focus:ring-blue-500/10 rounded-full text-sm transition-all outline-none"
+              className="w-full bg-transparent text-sm text-[#1f1f1f] placeholder:text-slate-500 outline-none"
             />
-            {searchQuery && (
+            {searchQuery ? (
               <button
+                type="button"
                 onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200/60"
+                title="Effacer la recherche"
               >
                 <X className="h-4 w-4" />
               </button>
+            ) : (
+              <SlidersHorizontal className="h-4 w-4 text-slate-400 flex-shrink-0" />
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Right Action Icons & Profile */}
+        <div className="flex items-center gap-1 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => userEmail && fetchMessages(userEmail)}
+            className="p-2.5 rounded-full text-slate-600 hover:bg-slate-200/70 transition-colors"
+            title="Actualiser les messages"
+          >
+            <RefreshCw className={`h-5 w-5 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
+          </button>
+
           <button
             type="button"
             onClick={() => setShowSettingsModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-blue-600 bg-slate-100/80 hover:bg-blue-50 rounded-lg transition-colors border border-slate-200"
-            title="Paramètres d'affichage, police, couleur et signature"
+            className="p-2.5 rounded-full text-slate-600 hover:bg-slate-200/70 transition-colors"
+            title="Paramètres d'affichage, police et signature"
           >
-            <Settings className="h-4 w-4 text-slate-500" />
-            <span className="hidden sm:inline">Paramètres</span>
+            <Settings className="h-5 w-5" />
           </button>
 
-          <div className="text-right hidden sm:block">
-            <p className="text-sm font-semibold text-slate-800">{userEmail}</p>
-            <p className="text-xs font-medium text-emerald-500 flex items-center justify-end">
-              Connecté
-            </p>
-          </div>
-          <div 
-            onClick={() => setShowSettingsModal(true)}
-            title="Ouvrir les paramètres"
-            className="h-10 w-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold cursor-pointer shadow-md ring-2 ring-white hover:scale-105 transition-transform"
-          >
-            {userEmail.charAt(0).toUpperCase()}
+          {/* Profile Avatar with Dropdown */}
+          <div className="relative ml-1">
+            <div
+              onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+              title={userEmail}
+              className={`h-9 w-9 rounded-full flex items-center justify-center font-bold text-sm text-white cursor-pointer shadow-xs ring-2 ring-white hover:ring-blue-400 transition-all ${getAvatarColor(userEmail)}`}
+            >
+              {userEmail.charAt(0).toUpperCase()}
+            </div>
+
+            {showAccountDropdown && (
+              <>
+                <div 
+                  className="fixed inset-0 z-30" 
+                  onClick={() => setShowAccountDropdown(false)} 
+                />
+                <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 p-4 z-40 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+                    <div className={`h-11 w-11 rounded-full flex items-center justify-center font-bold text-lg text-white ${getAvatarColor(userEmail)}`}>
+                      {userEmail.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-slate-900 truncate">{userEmail}</p>
+                      <p className="text-xs font-medium text-emerald-600 flex items-center gap-1 mt-0.5">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Connecté
+                      </p>
+                    </div>
+                  </div>
+                  <div className="py-2 space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAccountDropdown(false);
+                        setShowSettingsModal(true);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <Settings className="h-4 w-4 text-slate-500" />
+                      Paramètres du compte & Webmail
+                    </button>
+                    <Link
+                      href="/dashboard"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <ExternalLink className="h-4 w-4 text-slate-500" />
+                      Accéder au Tableau de bord
+                    </Link>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Se déconnecter
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </header>
 
-      {/* WORKSPACE */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* SIDEBAR */}
-        <div className="w-64 bg-white/50 backdrop-blur-sm border-r border-slate-200/60 flex flex-col p-4 z-10">
+      {/* WORKSPACE GMAIL */}
+      <div className="flex-1 flex overflow-hidden bg-[#f6f8fc]">
+        {/* SIDEBAR GMAIL */}
+        <div className={`${sidebarCollapsed ? "w-20 items-center" : "w-64"} bg-[#f6f8fc] flex flex-col p-3 transition-all duration-200 z-10 flex-shrink-0`}>
+          {/* Nouveau message - Iconic Gmail Floating Pill */}
           <button
             onClick={handleOpenNewCompose}
-            className="w-full group flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-xl font-medium transition-all shadow-md shadow-blue-500/20 hover:shadow-blue-500/40 active:scale-[0.98] mb-8"
+            className={`flex items-center gap-3.5 bg-[#c2e7ff] hover:bg-[#b3d7ef] text-[#001d35] font-semibold text-sm rounded-2xl shadow-xs hover:shadow-md active:scale-95 transition-all mb-4 ${
+              sidebarCollapsed ? "p-3.5 justify-center" : "px-6 py-4"
+            }`}
+            title="Nouveau message"
           >
-            <PenSquare className="h-4 w-4 mr-2 group-hover:scale-110 transition-transform" />
-            Nouveau message
+            <PenSquare className="h-5 w-5 text-[#001d35]" />
+            {!sidebarCollapsed && <span>Nouveau message</span>}
           </button>
 
-          <nav className="flex-1 space-y-1.5">
+          {/* Navigation Dossiers Style Gmail */}
+          <nav className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
             {[
               { id: "inbox", label: "Boîte de réception", icon: Inbox, count: unreadInboxCount },
+              { id: "starred", label: "Messages suivis", icon: Star, count: starredCount },
               { id: "sent", label: "Envoyés", icon: Send, count: 0 },
               { id: "drafts", label: "Brouillons", icon: FileText, count: draftsCount },
               { id: "spams", label: "Spams", icon: AlertOctagon, count: spamsCount },
               { id: "trash", label: "Corbeille", icon: Trash2, count: 0 },
               { id: "folders", label: "Archives", icon: Folder, count: 0 },
-            ].map((folder) => (
-              <button
-                key={folder.id}
-                onClick={() => {
-                  setActiveFolder(folder.id);
-                  setSelectedEmail(null);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  activeFolder === folder.id
-                    ? "bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-100/50"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                }`}
-              >
-                <div className="flex items-center">
-                  <folder.icon
-                    className={`h-4 w-4 mr-3 ${
-                      activeFolder === folder.id ? "text-blue-600" : "text-slate-400"
-                    }`}
-                  />
-                  {folder.label}
-                </div>
-                {folder.count > 0 && (
-                  <span
-                    className={`text-xs py-0.5 px-2 rounded-full font-semibold ${
-                      activeFolder === folder.id
-                        ? "bg-blue-600 text-white"
-                        : "bg-slate-200 text-slate-700"
-                    }`}
-                  >
-                    {folder.count}
-                  </span>
-                )}
-              </button>
-            ))}
+            ].map((folder) => {
+              const isActive = activeFolder === folder.id;
+              return (
+                <button
+                  key={folder.id}
+                  onClick={() => {
+                    setActiveFolder(folder.id);
+                    setSelectedEmail(null);
+                  }}
+                  title={folder.label}
+                  className={`w-full flex items-center justify-between rounded-full text-sm font-medium transition-colors ${
+                    sidebarCollapsed ? "p-3 justify-center" : "px-4 py-2.5"
+                  } ${
+                    isActive
+                      ? "bg-[#d3e3fd] text-[#041e49] font-bold"
+                      : "text-[#444746] hover:bg-[#eaebef]"
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5">
+                    <folder.icon
+                      className={`h-4 w-4 ${
+                        isActive ? "text-[#041e49]" : "text-[#444746]"
+                      } ${folder.id === "starred" && starredCount > 0 ? "fill-amber-400 text-amber-400" : ""}`}
+                    />
+                    {!sidebarCollapsed && <span>{folder.label}</span>}
+                  </div>
+                  {!sidebarCollapsed && folder.count > 0 && (
+                    <span
+                      className={`text-xs py-0.5 px-2 rounded-full font-bold ${
+                        isActive
+                          ? "bg-blue-600 text-white"
+                          : "bg-slate-200/90 text-slate-700"
+                      }`}
+                    >
+                      {folder.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </nav>
 
-          <div className="mt-auto pt-4 border-t border-slate-200/60 space-y-1">
+          {/* Footer Sidebar */}
+          <div className="mt-auto pt-3 border-t border-slate-200/70 space-y-1">
             <button
               onClick={() => setShowSettingsModal(true)}
-              className="w-full flex items-center px-3 py-2.5 text-sm font-medium text-slate-600 rounded-lg hover:bg-slate-100 hover:text-slate-900 transition-colors"
+              className={`w-full flex items-center rounded-full text-xs font-semibold text-[#444746] hover:bg-[#eaebef] transition-colors ${
+                sidebarCollapsed ? "p-3 justify-center" : "px-4 py-2"
+              }`}
+              title="Paramètres"
             >
-              <Settings className="h-4 w-4 mr-3 text-slate-400" /> Paramètres
+              <Settings className="h-4 w-4 text-slate-500 mr-2.5" />
+              {!sidebarCollapsed && <span>Paramètres</span>}
             </button>
             <button
               onClick={handleLogout}
-              className="w-full flex items-center px-3 py-2.5 text-sm font-medium text-slate-500 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors"
+              className={`w-full flex items-center rounded-full text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors ${
+                sidebarCollapsed ? "p-3 justify-center" : "px-4 py-2"
+              }`}
+              title="Déconnexion"
             >
-              <LogOut className="h-4 w-4 mr-3" /> Déconnexion
+              <LogOut className="h-4 w-4 mr-2.5" />
+              {!sidebarCollapsed && <span>Déconnexion</span>}
             </button>
           </div>
         </div>
 
-        {/* LISTE DES MAILS */}
-        <div className="w-[380px] bg-white border-r border-slate-200/60 flex flex-col flex-shrink-0 relative z-0">
-          <div className="px-5 py-4 border-b border-slate-100 bg-white/95 backdrop-blur-sm sticky top-0 z-10 flex justify-between items-center">
-            <h2 className="text-base font-bold text-slate-800 tracking-tight">
-              {activeFolder === "inbox"
-                ? "Boîte de réception"
-                : activeFolder === "sent"
-                ? "Messages envoyés"
-                : activeFolder === "drafts"
-                ? "Brouillons"
-                : activeFolder === "spams"
-                ? "Spams"
-                : activeFolder === "folders"
-                ? "Archives"
-                : "Corbeille"}
-            </h2>
-            <button
-              onClick={() => userEmail && fetchMessages(userEmail)}
-              title="Actualiser les messages"
-              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
-            </button>
-          </div>
-
-          <div className="overflow-y-auto flex-1 custom-scrollbar">
-            {filteredEmails.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-slate-400 px-4 text-center">
-                <Inbox className="h-8 w-8 mb-3 opacity-20" />
-                <p className="text-sm font-medium">Aucun message dans ce dossier</p>
+        {/* CONTENEUR BLANC FLOTTANT (STYLE GOOGLE WORKSPACE) */}
+        <div className="flex-1 flex mr-3 mb-3 bg-white rounded-2xl shadow-xs border border-slate-200/80 overflow-hidden">
+          {/* LISTE DES MESSAGES (MIDDLE COLUMN) */}
+          <div className={`w-full lg:w-[390px] ${selectedEmail ? "hidden lg:flex" : "flex"} border-r border-slate-200/80 flex-col flex-shrink-0 bg-white`}>
+            {/* Top Toolbar Liste */}
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-white sticky top-0 z-10">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-bold text-slate-900 tracking-tight">
+                  {activeFolder === "inbox"
+                    ? "Boîte de réception"
+                    : activeFolder === "starred"
+                    ? "Messages suivis"
+                    : activeFolder === "sent"
+                    ? "Messages envoyés"
+                    : activeFolder === "drafts"
+                    ? "Brouillons"
+                    : activeFolder === "spams"
+                    ? "Spams"
+                    : activeFolder === "folders"
+                    ? "Archives"
+                    : "Corbeille"}
+                </h2>
+                <span className="text-xs text-slate-400 font-medium">
+                  ({filteredEmails.length})
+                </span>
               </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {filteredEmails.map((email) => (
-                  <div
-                    key={email.id}
-                    onClick={() => handleSelectEmail(email)}
-                    className={`p-4 cursor-pointer transition-all duration-200 relative group ${
-                      selectedEmail?.id === email.id
-                        ? "bg-blue-50/70 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:bg-blue-600"
-                        : !email.read
-                        ? "bg-blue-50/20 hover:bg-slate-50"
-                        : "hover:bg-slate-50"
-                    }`}
-                  >
-                    <div className="flex justify-between items-baseline mb-1">
-                      <div className="flex items-center gap-2 min-w-0 pr-2">
-                        {!email.read && (
-                          <span className="h-2 w-2 rounded-full bg-blue-600 flex-shrink-0" />
-                        )}
-                        <h3
-                          className={`text-sm truncate ${
-                            !email.read ? "font-bold text-slate-900" : "font-medium text-slate-700"
-                          }`}
-                        >
-                          {activeFolder === "sent" || activeFolder === "drafts"
-                            ? `À : ${email.to || "(Destinataire non défini)"}`
-                            : email.sender}
-                        </h3>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        {email.attachments && email.attachments.length > 0 && (
-                          <Paperclip className="h-3.5 w-3.5 text-slate-400" />
-                        )}
-                        <span
-                          className={`text-[11px] font-medium ${
-                            !email.read ? "text-blue-600 font-semibold" : "text-slate-400"
-                          }`}
-                        >
-                          {email.date}
-                        </span>
-                      </div>
-                    </div>
 
-                    <div className="flex items-center justify-between gap-2 mb-1">
+              {/* Filtres rapides : Tous, Non lus, Favoris */}
+              <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setActiveTabFilter("all")}
+                  className={`px-2 py-1 rounded-md transition-colors ${
+                    activeTabFilter === "all" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  Tous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTabFilter("unread")}
+                  className={`px-2 py-1 rounded-md transition-colors ${
+                    activeTabFilter === "unread" ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  Non lus
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTabFilter("starred")}
+                  className={`px-2 py-1 rounded-md transition-colors ${
+                    activeTabFilter === "starred" ? "bg-white text-amber-600 shadow-xs" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  ★
+                </button>
+              </div>
+            </div>
+
+            {/* Email Rows */}
+            <div className="overflow-y-auto flex-1 custom-scrollbar divide-y divide-slate-100/80">
+              {filteredEmails.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-56 text-slate-400 px-4 text-center">
+                  <div className="h-14 w-14 rounded-full bg-slate-50 flex items-center justify-center mb-3 text-slate-300">
+                    <Inbox className="h-7 w-7" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-600">Aucun message</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Ce dossier est actuellement vide.</p>
+                </div>
+              ) : (
+                filteredEmails.map((email) => {
+                  const isSelected = selectedEmail?.id === email.id;
+                  const isUnread = !email.read;
+                  return (
+                    <div
+                      key={email.id}
+                      onClick={() => handleSelectEmail(email)}
+                      className={`px-4 py-3 cursor-pointer transition-all duration-150 relative group ${
+                        isSelected
+                          ? "bg-[#eaf1fb] border-l-4 border-blue-600"
+                          : isUnread
+                          ? "bg-blue-50/25 hover:bg-slate-50/80"
+                          : "hover:bg-slate-50/80"
+                      }`}
+                    >
+                      {/* Top Row : Star, Sender, Attachment, Date */}
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          {/* Star interactive */}
+                          <button
+                            type="button"
+                            onClick={(e) => handleToggleStar(email, e)}
+                            className={`p-0.5 rounded-sm transition-colors ${
+                              email.starred
+                                ? "text-amber-400"
+                                : "text-slate-300 hover:text-amber-400"
+                            }`}
+                            title="Suivre / Important"
+                          >
+                            <Star className={`h-4 w-4 ${email.starred ? "fill-amber-400" : ""}`} />
+                          </button>
+
+                          {/* Blue unread dot */}
+                          {isUnread && (
+                            <span className="h-2 w-2 rounded-full bg-blue-600 flex-shrink-0" />
+                          )}
+
+                          {/* Sender Initials Avatar */}
+                          <div
+                            className={`h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 shadow-2xs ${getAvatarColor(
+                              email.sender || email.email
+                            )}`}
+                          >
+                            {(email.sender || "M").charAt(0).toUpperCase()}
+                          </div>
+
+                          <h3
+                            className={`text-sm truncate ${
+                              isUnread ? "font-bold text-slate-900" : "font-medium text-slate-700"
+                            }`}
+                          >
+                            {activeFolder === "sent" || activeFolder === "drafts"
+                              ? `À : ${email.to || "(Destinataire non défini)"}`
+                              : email.sender}
+                          </h3>
+                        </div>
+
+                        {/* Date & Attachments (hidden on hover when quick actions show) */}
+                        <div className="flex items-center gap-1.5 flex-shrink-0 group-hover:hidden">
+                          {email.attachments && email.attachments.length > 0 && (
+                            <Paperclip className="h-3.5 w-3.5 text-slate-400" />
+                          )}
+                          <span
+                            className={`text-xs font-medium ${
+                              isUnread ? "text-blue-600 font-bold" : "text-slate-400"
+                            }`}
+                          >
+                            {email.date}
+                          </span>
+                        </div>
+
+                        {/* GMAIL HOVER ACTIONS : Appears on row hover */}
+                        <div className="hidden group-hover:flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded-lg shadow-xs border border-slate-200/80 z-10 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMoveToFolder(email, "folders", "Message archivé");
+                            }}
+                            className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded"
+                            title="Archiver"
+                          >
+                            <Archive className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMoveToFolder(email, "trash", "Placé dans la corbeille");
+                            }}
+                            className="p-1 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded"
+                            title="Supprimer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleRead(email);
+                            }}
+                            className="p-1 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded"
+                            title={isUnread ? "Marquer comme lu" : "Marquer comme non lu"}
+                          >
+                            {isUnread ? <MailOpen className="h-3.5 w-3.5" /> : <Mail className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Subject */}
                       <h4
-                        className={`text-sm truncate ${
-                          !email.read ? "font-semibold text-slate-900" : "text-slate-600"
+                        className={`text-xs truncate mb-1 pl-6 ${
+                          isUnread ? "font-bold text-slate-900" : "font-medium text-slate-700"
                         }`}
                       >
                         {email.subject}
                       </h4>
-                      <button
-                        onClick={(e) => handleToggleStar(email, e)}
-                        className={`p-0.5 rounded transition-colors ${
-                          email.starred
-                            ? "text-amber-400"
-                            : "text-transparent group-hover:text-slate-300 hover:!text-amber-400"
-                        }`}
-                        title="Important"
-                      >
-                        <Star className={`h-3.5 w-3.5 ${email.starred ? "fill-amber-400" : ""}`} />
-                      </button>
-                    </div>
 
-                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
-                      {email.preview}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
+                      {/* Snippet preview */}
+                      <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed pl-6">
+                        {email.preview}
+                      </p>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
-        </div>
 
         {/* LECTURE DU MAIL */}
-        <div className="flex-1 bg-white flex flex-col relative overflow-hidden">
+        {/* LECTURE DU MAIL */}
+        <div className={`flex-1 bg-white flex flex-col relative overflow-hidden ${!selectedEmail ? "hidden lg:flex" : "flex"}`}>
           {selectedEmail ? (
             <>
-              {/* Toolbar complète */}
-              <div className="h-14 border-b border-slate-200/60 flex items-center px-6 gap-1.5 bg-white/95 backdrop-blur-sm flex-shrink-0">
+              {/* Toolbar complète Style Gmail */}
+              <div className="h-14 border-b border-slate-200/80 flex items-center px-4 md:px-6 gap-1 bg-white sticky top-0 z-20 flex-shrink-0">
+                {/* Back button (mobile / reset view) */}
+                <button
+                  onClick={() => {
+                    setSelectedEmail(null);
+                    setShowEmailDetailsModal(false);
+                  }}
+                  className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors mr-1"
+                  title="Retour à la liste"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+
+                <div className="w-px h-5 bg-slate-200 mx-1" />
+
+                {/* Reply, Reply All, Forward quick buttons */}
                 <button
                   onClick={() => handleReply(selectedEmail)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                   title="Répondre"
                 >
                   <Reply className="h-4 w-4" />
-                  <span className="hidden md:inline">Répondre</span>
                 </button>
                 <button
                   onClick={() => handleReplyAll(selectedEmail)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                   title="Répondre à tous"
                 >
                   <ReplyAll className="h-4 w-4" />
-                  <span className="hidden md:inline">Répondre à tous</span>
                 </button>
                 <button
                   onClick={() => handleForward(selectedEmail)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                   title="Transférer"
                 >
                   <Forward className="h-4 w-4" />
-                  <span className="hidden md:inline">Transférer</span>
                 </button>
 
-                <div className="w-px h-5 bg-slate-200 mx-1.5" />
+                <div className="w-px h-5 bg-slate-200 mx-1" />
 
+                {/* Archive */}
                 {selectedEmail.folder !== "folders" && (
                   <button
                     onClick={() =>
                       handleMoveToFolder(selectedEmail, "folders", "Message archivé")
                     }
-                    className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                    className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
                     title="Archiver"
                   >
                     <Archive className="h-4 w-4" />
                   </button>
                 )}
 
+                {/* Spam */}
                 {selectedEmail.folder !== "spams" ? (
                   <button
                     onClick={() =>
                       handleMoveToFolder(selectedEmail, "spams", "Signalé comme spam")
                     }
-                    className="p-2 text-slate-500 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
-                    title="Déplacer vers les Spams"
+                    className="p-2 text-slate-600 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
+                    title="Signaler comme spam"
                   >
                     <AlertOctagon className="h-4 w-4" />
                   </button>
@@ -1269,20 +1525,21 @@ ${composeBody}
                         "Restauré dans la boîte de réception"
                       )
                     }
-                    className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                    className="p-2 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
                     title="Ce n'est pas un spam (Restaurer)"
                   >
                     <RotateCcw className="h-4 w-4" />
                   </button>
                 )}
 
+                {/* Trash */}
                 {selectedEmail.folder !== "trash" ? (
                   <button
                     onClick={() =>
                       handleMoveToFolder(selectedEmail, "trash", "Déplacé dans la corbeille")
                     }
-                    className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Mettre à la corbeille"
+                    className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                    title="Supprimer"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -1296,7 +1553,7 @@ ${composeBody}
                           "Message restauré dans la boîte de réception"
                         )
                       }
-                      className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                      className="p-2 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
                       title="Restaurer le message"
                     >
                       <RotateCcw className="h-4 w-4" />
@@ -1309,7 +1566,7 @@ ${composeBody}
                           "Message supprimé définitivement"
                         )
                       }
-                      className="px-2.5 py-1 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                      className="px-2.5 py-1 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
                       title="Supprimer définitivement"
                     >
                       Supprimer définitivement
@@ -1317,11 +1574,12 @@ ${composeBody}
                   </>
                 )}
 
-                <div className="w-px h-5 bg-slate-200 mx-1.5" />
+                <div className="w-px h-5 bg-slate-200 mx-1" />
 
+                {/* Mark read / unread */}
                 <button
                   onClick={() => handleToggleRead(selectedEmail)}
-                  className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                   title={selectedEmail.read ? "Marquer comme non lu" : "Marquer comme lu"}
                 >
                   {selectedEmail.read ? (
@@ -1331,12 +1589,13 @@ ${composeBody}
                   )}
                 </button>
 
+                {/* Star toggle */}
                 <button
                   onClick={() => handleToggleStar(selectedEmail)}
-                  className={`p-2 rounded-lg transition-colors ${
+                  className={`p-2 rounded-full transition-colors ${
                     selectedEmail.starred
                       ? "text-amber-500 bg-amber-50"
-                      : "text-slate-500 hover:text-amber-500 hover:bg-amber-50"
+                      : "text-slate-600 hover:text-amber-500 hover:bg-amber-50"
                   }`}
                   title="Marquer comme important"
                 >
@@ -1345,18 +1604,20 @@ ${composeBody}
 
                 <div className="flex-1" />
 
+                {/* Force sync remote */}
                 <button
                   onClick={() => handleForceSyncEmail(selectedEmail)}
                   disabled={isSyncingContent}
-                  className="p-2 text-slate-500 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-full transition-colors"
                   title="Actualiser et récupérer le contenu intégral"
                 >
                   <RefreshCw className={`h-4 w-4 ${isSyncingContent ? "animate-spin text-blue-600" : ""}`} />
                 </button>
 
+                {/* Print */}
                 <button
                   onClick={() => handlePrintEmail(selectedEmail)}
-                  className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                  className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
                   title="Imprimer l'e-mail"
                 >
                   <Printer className="h-4 w-4" />
@@ -1365,49 +1626,146 @@ ${composeBody}
 
               {/* Contenu du mail */}
               <div className="flex-1 overflow-y-auto custom-scrollbar">
-                <div className="max-w-4xl mx-auto p-8 lg:p-10">
-                  <div className="flex items-start justify-between gap-4 mb-6">
-                    <h1 className="text-2xl lg:text-3xl font-bold text-slate-900 tracking-tight break-words">
+                {/* Ligne d'Objet Style Gmail */}
+                <div className="flex items-center justify-between gap-4 py-4 px-6 lg:px-8 border-b border-slate-100">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <h1 className="text-xl lg:text-2xl font-normal text-slate-900 tracking-tight break-words">
                       {selectedEmail.subject}
                     </h1>
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-600 flex-shrink-0">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-600 flex-shrink-0">
                       {selectedEmail.folder === "inbox"
                         ? "Boîte de réception"
                         : selectedEmail.folder === "sent"
                         ? "Envoyé"
+                        : selectedEmail.folder === "drafts"
+                        ? "Brouillon"
+                        : selectedEmail.folder === "spams"
+                        ? "Spam"
+                        : selectedEmail.folder === "folders"
+                        ? "Archives"
                         : selectedEmail.folder}
                     </span>
                   </div>
+                </div>
 
-                  {/* En-tête Expéditeur / Destinataires */}
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-6 mb-8 border-b border-slate-100">
-                    <div className="flex items-start gap-4">
-                      <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-lg shadow-sm flex-shrink-0">
-                        {(selectedEmail.sender || "?").charAt(0).toUpperCase()}
+                {/* En-tête Expéditeur Style Gmail avec popup "à moi ▼" */}
+                <div className="flex items-start justify-between gap-4 py-4 px-6 lg:px-8 border-b border-slate-100/80">
+                  <div className="flex items-start gap-3.5 min-w-0">
+                    {/* Initial Avatar avec couleur Google */}
+                    <div
+                      className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-white text-sm shadow-2xs flex-shrink-0 ${getAvatarColor(
+                        selectedEmail.sender || selectedEmail.email
+                      )}`}
+                    >
+                      {(selectedEmail.sender || selectedEmail.email || "M").charAt(0).toUpperCase()}
+                    </div>
+
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="font-bold text-slate-900 text-sm">
+                          {selectedEmail.sender}
+                        </span>
+                        <span className="text-xs text-slate-500 font-normal">
+                          &lt;{selectedEmail.email}&gt;
+                        </span>
                       </div>
-                      <div className="space-y-1">
-                        <div className="flex flex-wrap items-baseline gap-2">
-                          <p className="font-bold text-slate-900 text-base">
-                            {selectedEmail.sender}
-                          </p>
-                          <p className="text-sm text-slate-500">&lt;{selectedEmail.email}&gt;</p>
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          <span className="font-medium text-slate-600">À :</span>{" "}
-                          {selectedEmail.to || userEmail}
-                        </p>
-                        {selectedEmail.cc && selectedEmail.cc.length > 0 && (
-                          <p className="text-xs text-slate-500">
-                            <span className="font-medium text-slate-600">Cc :</span>{" "}
-                            {selectedEmail.cc.join(", ")}
-                          </p>
+
+                      {/* Déclencheur détails "à moi ▼" */}
+                      <div className="relative inline-block">
+                        <button
+                          type="button"
+                          onClick={() => setShowEmailDetailsModal(!showEmailDetailsModal)}
+                          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 px-1.5 py-0.5 rounded transition-colors"
+                        >
+                          <span>à moi</span>
+                          <ChevronDown className="h-3 w-3 text-slate-400" />
+                        </button>
+
+                        {/* Modale popup détails style Gmail */}
+                        {showEmailDetailsModal && (
+                          <div className="absolute left-0 mt-1.5 w-80 bg-white rounded-xl shadow-xl border border-slate-200 p-4 text-xs z-30 animate-in fade-in zoom-in-95 duration-150 space-y-2">
+                            <div className="flex justify-between items-center pb-2 border-b border-slate-100 font-bold text-slate-800">
+                              <span>Détails du message</span>
+                              <button
+                                onClick={() => setShowEmailDetailsModal(false)}
+                                className="p-1 text-slate-400 hover:text-slate-700 rounded"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1 text-slate-500">
+                              <span className="font-semibold text-slate-700">De :</span>
+                              <span className="col-span-3 text-slate-800 break-words">
+                                {selectedEmail.sender} &lt;{selectedEmail.email}&gt;
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1 text-slate-500">
+                              <span className="font-semibold text-slate-700">À :</span>
+                              <span className="col-span-3 text-slate-800 break-words">
+                                {selectedEmail.to || userEmail}
+                              </span>
+                            </div>
+                            {selectedEmail.cc && selectedEmail.cc.length > 0 && (
+                              <div className="grid grid-cols-4 gap-1 text-slate-500">
+                                <span className="font-semibold text-slate-700">Cc :</span>
+                                <span className="col-span-3 text-slate-800 break-words">
+                                  {selectedEmail.cc.join(", ")}
+                                </span>
+                              </div>
+                            )}
+                            <div className="grid grid-cols-4 gap-1 text-slate-500">
+                              <span className="font-semibold text-slate-700">Date :</span>
+                              <span className="col-span-3 text-slate-800">
+                                {selectedEmail.fullDate || selectedEmail.date}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1 text-slate-500">
+                              <span className="font-semibold text-slate-700">Objet :</span>
+                              <span className="col-span-3 text-slate-800 break-words">
+                                {selectedEmail.subject}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1 text-slate-500 pt-1.5 border-t border-slate-100">
+                              <span className="font-semibold text-slate-700">Sécurité :</span>
+                              <span className="col-span-3 text-emerald-700 flex items-center gap-1 font-medium">
+                                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Chiffrement standard (TLS)
+                              </span>
+                            </div>
+                          </div>
                         )}
                       </div>
                     </div>
-                    <div className="text-xs font-medium text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100 self-start">
-                      {selectedEmail.fullDate || selectedEmail.date}
-                    </div>
                   </div>
+
+                  {/* Date & Actions rapides à droite */}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-xs text-slate-500 font-medium hidden sm:inline">
+                      {selectedEmail.fullDate || selectedEmail.date}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleStar(selectedEmail)}
+                      className={`p-1.5 rounded-full transition-colors ${
+                        selectedEmail.starred
+                          ? "text-amber-500 bg-amber-50"
+                          : "text-slate-400 hover:text-amber-500 hover:bg-slate-100"
+                      }`}
+                      title="Important"
+                    >
+                      <Star className={`h-4 w-4 ${selectedEmail.starred ? "fill-amber-400" : ""}`} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleReply(selectedEmail)}
+                      className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
+                      title="Répondre"
+                    >
+                      <Reply className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-w-4xl mx-auto p-6 lg:p-8">
 
                   {/* Corps de l'e-mail avec rendu fidèle */}
                   {isLoadingEmailBody ? (
@@ -1640,426 +1998,506 @@ ${composeBody}
                     </div>
                   )}
 
-                  {/* Actions Rapides en bas du mail */}
-                  <div className="mt-12 pt-8 border-t border-slate-100 flex flex-wrap gap-3">
+                  {/* Actions Rapides en bas du mail Style Gmail (Pills) */}
+                  <div className="mt-12 pt-6 border-t border-slate-100 flex flex-wrap gap-2.5">
                     <button
                       onClick={() => handleReply(selectedEmail)}
-                      className="flex items-center px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-all shadow-sm shadow-blue-500/20"
+                      className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all shadow-2xs"
                     >
-                      <Reply className="h-4 w-4 mr-2" /> Répondre
+                      <Reply className="h-4 w-4 text-slate-500" />
+                      <span>Répondre</span>
                     </button>
                     <button
                       onClick={() => handleReplyAll(selectedEmail)}
-                      className="flex items-center px-5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all shadow-sm"
+                      className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all shadow-2xs"
                     >
-                      <ReplyAll className="h-4 w-4 mr-2 text-slate-500" /> Répondre à tous
+                      <ReplyAll className="h-4 w-4 text-slate-500" />
+                      <span>Répondre à tous</span>
                     </button>
                     <button
                       onClick={() => handleForward(selectedEmail)}
-                      className="flex items-center px-5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all shadow-sm"
+                      className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all shadow-2xs"
                     >
-                      <Forward className="h-4 w-4 mr-2 text-slate-500" /> Transférer
+                      <Forward className="h-4 w-4 text-slate-500" />
+                      <span>Transférer</span>
                     </button>
                   </div>
                 </div>
               </div>
             </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center bg-slate-50/50">
-              <div className="h-20 w-20 bg-white rounded-2xl shadow-sm border border-slate-100 flex items-center justify-center mb-5">
-                <Mail className="h-8 w-8 text-slate-300" />
+            <div className="flex-1 flex flex-col items-center justify-center bg-white p-6 text-center">
+              <div className="h-20 w-20 bg-[#f2f6fc] rounded-full flex items-center justify-center mb-4 text-slate-400">
+                <MailOpen className="h-10 w-10 text-blue-500/70" />
               </div>
-              <h3 className="text-lg font-bold text-slate-700">Aucun message sélectionné</h3>
-              <p className="text-slate-500 text-sm mt-1">
-                Cliquez sur un e-mail dans la liste pour l&apos;ouvrir et le lire.
+              <h3 className="text-base font-semibold text-slate-800">Aucun message sélectionné</h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                Sélectionnez une conversation dans la liste à gauche pour afficher son contenu.
               </p>
             </div>
           )}
         </div>
       </div>
+    </div>
 
-      {/* COMPOSER (OVERLAY) */}
+      {/* COMPOSER (OVERLAY STYLE GMAIL MATERIAL 3) */}
       {isComposing && (
-        <div className="fixed inset-0 z-50 flex items-end justify-end sm:p-6 sm:pr-8 pointer-events-none">
-          <div className="pointer-events-auto w-full sm:w-[640px] h-full sm:h-[620px] bg-white sm:rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in slide-in-from-bottom-8 duration-200 ease-out">
-            {/* Composer Header */}
-            <div className="bg-slate-900 text-white px-5 py-3.5 flex justify-between items-center">
-              <span className="font-semibold text-sm tracking-wide truncate pr-4">
+        <>
+          {composerMinimized ? (
+            /* Version réduite (Dock en bas à droite Style Gmail) */
+            <div className="fixed bottom-0 right-4 sm:right-8 z-50 w-72 h-10 bg-[#f2f6fc] border border-slate-300 rounded-t-xl shadow-xl flex items-center justify-between px-4 cursor-pointer hover:bg-[#eaf1fb] transition-colors">
+              <span
+                onClick={() => setComposerMinimized(false)}
+                className="font-medium text-xs text-[#041e49] truncate pr-2 flex-1 select-none"
+              >
                 {composerTitle}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 <button
+                  type="button"
+                  onClick={() => setComposerMinimized(false)}
+                  className="p-1 text-slate-500 hover:text-slate-900 rounded"
+                  title="Agrandir"
+                >
+                  <Maximize2 className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
                     setIsComposing(false);
-                    setSentSuccess(false);
+                    setComposerMinimized(false);
                     setShowCcBcc(false);
                   }}
-                  className="text-slate-400 hover:text-white transition-colors p-1"
+                  className="p-1 text-slate-500 hover:text-slate-900 rounded"
                   title="Fermer"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>
-
-            {sentSuccess ? (
-              <div className="flex-1 flex flex-col items-center justify-center bg-white">
-                <div className="h-20 w-20 bg-emerald-50 rounded-full flex items-center justify-center mb-5 border-4 border-emerald-100/50 animate-in zoom-in duration-300">
-                  <CheckCircle className="h-10 w-10 text-emerald-500" />
+          ) : (
+            /* Fenêtre de composition standard ou plein écran */
+            <div
+              className={
+                composerMaximized
+                  ? "fixed inset-2 sm:inset-6 z-50 bg-white rounded-2xl shadow-2xl border border-slate-300 flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
+                  : "fixed bottom-0 right-0 sm:right-8 z-50 w-full sm:w-[580px] h-[85vh] sm:h-[580px] bg-white sm:rounded-t-2xl shadow-2xl border border-slate-300 flex flex-col overflow-hidden animate-in slide-in-from-bottom-8 duration-200"
+              }
+            >
+              {/* Header Style Gmail */}
+              <div className="bg-[#f2f6fc] text-[#041e49] px-4 py-2.5 flex justify-between items-center border-b border-slate-200 select-none">
+                <span className="font-semibold text-xs tracking-wide truncate pr-4 text-slate-800">
+                  {composerTitle}
+                </span>
+                <div className="flex items-center gap-1 text-slate-500">
+                  {/* Réduire */}
+                  <button
+                    type="button"
+                    onClick={() => setComposerMinimized(true)}
+                    className="p-1 hover:text-slate-900 hover:bg-slate-200/60 rounded transition-colors"
+                    title="Réduire"
+                  >
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  {/* Agrandir / Plein écran */}
+                  <button
+                    type="button"
+                    onClick={() => setComposerMaximized(!composerMaximized)}
+                    className="p-1 hover:text-slate-900 hover:bg-slate-200/60 rounded transition-colors"
+                    title={composerMaximized ? "Réduire la taille" : "Plein écran"}
+                  >
+                    {composerMaximized ? (
+                      <Minimize2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                  {/* Fermer */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsComposing(false);
+                      setSentSuccess(false);
+                      setShowCcBcc(false);
+                      setComposerMaximized(false);
+                      setComposerMinimized(false);
+                    }}
+                    className="p-1 hover:text-slate-900 hover:bg-slate-200/60 rounded transition-colors"
+                    title="Fermer"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
-                <h3 className="text-xl font-bold text-slate-800 mb-2">Message envoyé !</h3>
-                <p className="text-slate-500 text-sm">Votre communication a bien été transmise.</p>
               </div>
-            ) : (
-              <>
-                <div className="flex flex-col flex-1 overflow-y-auto">
-                  <div className="flex px-5 py-2.5 border-b border-slate-100 items-center bg-slate-50/40 text-xs text-slate-500">
-                    <span className="font-medium w-10">De</span>
-                    <span className="font-semibold text-slate-700">{userEmail}</span>
-                  </div>
 
-                  {/* Champ À avec tags/badges sur espace ou virgule */}
-                  <div className="flex flex-wrap px-5 py-2.5 border-b border-slate-100 items-center gap-1.5 focus-within:bg-blue-50/20 transition-colors">
-                    <span className="text-sm font-medium text-slate-500 mr-2 w-6">À</span>
-                    {composeToTags.map((tag, idx) => (
-                      <span
-                        key={idx}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-100/80 text-blue-800 rounded-full text-xs font-semibold animate-in zoom-in-95 duration-100"
-                      >
-                        {tag}
-                        <button
-                          type="button"
-                          onClick={() => setComposeToTags((prev) => prev.filter((_, i) => i !== idx))}
-                          className="text-blue-500 hover:text-blue-900 rounded-full hover:bg-blue-200/60 p-0.5"
+              {sentSuccess ? (
+                <div className="flex-1 flex flex-col items-center justify-center bg-white p-6">
+                  <div className="h-16 w-16 bg-emerald-50 rounded-full flex items-center justify-center mb-4 border-4 border-emerald-100/50 animate-in zoom-in duration-300">
+                    <CheckCircle className="h-8 w-8 text-emerald-500" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-1">Message envoyé !</h3>
+                  <p className="text-slate-500 text-xs text-center">Votre communication a bien été transmise avec succès.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-col flex-1 overflow-y-auto custom-scrollbar">
+                    {/* De */}
+                    <div className="flex px-4 py-2 border-b border-slate-100 items-center text-xs text-slate-500">
+                      <span className="font-medium w-8">De</span>
+                      <span className="font-semibold text-slate-700">{userEmail}</span>
+                    </div>
+
+                    {/* Champ À avec tags / badges */}
+                    <div className="flex flex-wrap px-4 py-2 border-b border-slate-100 items-center gap-1.5 focus-within:bg-blue-50/20 transition-colors">
+                      <span className="text-xs font-medium text-slate-500 mr-2 w-6">À</span>
+                      {composeToTags.map((tag, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-blue-100/80 text-blue-800 rounded-full text-xs font-semibold animate-in zoom-in-95 duration-100"
                         >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
-                    ))}
-                    <input
-                      ref={composeToInputRef}
-                      type="text"
-                      value={composeTo}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val.endsWith(" ") || val.endsWith(",")) {
-                          const clean = val.replace(/[,\s]+$/, "").trim();
-                          if (clean) {
-                            setComposeToTags((prev) => [...prev, clean]);
-                            setComposeTo("");
-                            return;
-                          }
-                        }
-                        setComposeTo(val);
-                      }}
-                      onKeyDown={(e) => {
-                        if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeTo.trim()) {
-                          e.preventDefault();
-                          const clean = composeTo.replace(/[,\s]+$/, "").trim();
-                          if (clean) {
-                            setComposeToTags((prev) => [...prev, clean]);
-                            setComposeTo("");
-                          }
-                        } else if (e.key === "Backspace" && !composeTo && composeToTags.length > 0) {
-                          setComposeToTags((prev) => prev.slice(0, -1));
-                        }
-                      }}
-                      placeholder={composeToTags.length === 0 ? "Écrivez une adresse puis espace ou Entrée" : "Ajouter..."}
-                      className="flex-1 min-w-[160px] focus:outline-none text-sm bg-transparent placeholder-slate-400 py-1"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowCcBcc(!showCcBcc)}
-                      className={`text-xs font-semibold ml-auto uppercase tracking-wider px-2 py-1 rounded ${
-                        showCcBcc
-                          ? "bg-blue-100 text-blue-700"
-                          : "text-slate-400 hover:text-blue-600"
-                      }`}
-                    >
-                      Cc / Cci
-                    </button>
-                  </div>
-
-                  {showCcBcc && (
-                    <div className="animate-in slide-in-from-top-2 duration-150">
-                      {/* Champ Cc avec tags */}
-                      <div className="flex flex-wrap px-5 py-2 border-b border-slate-100 items-center gap-1.5 bg-slate-50/50 focus-within:bg-blue-50/20 transition-colors">
-                        <span className="text-sm font-medium text-slate-500 mr-2 w-6">Cc</span>
-                        {composeCcTags.map((tag, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-slate-200 text-slate-800 rounded-full text-xs font-semibold"
+                          {tag}
+                          <button
+                            type="button"
+                            onClick={() => setComposeToTags((prev) => prev.filter((_, i) => i !== idx))}
+                            className="text-blue-500 hover:text-blue-900 rounded-full hover:bg-blue-200/60 p-0.5"
                           >
-                            {tag}
-                            <button
-                              type="button"
-                              onClick={() => setComposeCcTags((prev) => prev.filter((_, i) => i !== idx))}
-                              className="text-slate-500 hover:text-slate-800"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </span>
-                        ))}
-                        <input
-                          type="text"
-                          value={composeCc}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val.endsWith(" ") || val.endsWith(",")) {
-                              const clean = val.replace(/[,\s]+$/, "").trim();
-                              if (clean) {
-                                setComposeCcTags((prev) => [...prev, clean]);
-                                setComposeCc("");
-                                return;
-                              }
-                            }
-                            setComposeCc(val);
-                          }}
-                          onKeyDown={(e) => {
-                            if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeCc.trim()) {
-                              e.preventDefault();
-                              const clean = composeCc.replace(/[,\s]+$/, "").trim();
-                              if (clean) {
-                                setComposeCcTags((prev) => [...prev, clean]);
-                                setComposeCc("");
-                              }
-                            } else if (e.key === "Backspace" && !composeCc && composeCcTags.length > 0) {
-                              setComposeCcTags((prev) => prev.slice(0, -1));
-                            }
-                          }}
-                          placeholder={composeCcTags.length === 0 ? "Destinataires en copie (espace pour valider)" : "Ajouter Cc..."}
-                          className="flex-1 min-w-[140px] focus:outline-none text-sm bg-transparent placeholder-slate-400 py-1"
-                        />
-                      </div>
-
-                      {/* Champ Cci avec tags */}
-                      <div className="flex flex-wrap px-5 py-2 border-b border-slate-100 items-center gap-1.5 bg-slate-50/50 focus-within:bg-blue-50/20 transition-colors">
-                        <span className="text-sm font-medium text-slate-500 mr-2 w-6">Cci</span>
-                        {composeBccTags.map((tag, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-slate-200 text-slate-800 rounded-full text-xs font-semibold"
-                          >
-                            {tag}
-                            <button
-                              type="button"
-                              onClick={() => setComposeBccTags((prev) => prev.filter((_, i) => i !== idx))}
-                              className="text-slate-500 hover:text-slate-800"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </span>
-                        ))}
-                        <input
-                          type="text"
-                          value={composeBcc}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val.endsWith(" ") || val.endsWith(",")) {
-                              const clean = val.replace(/[,\s]+$/, "").trim();
-                              if (clean) {
-                                setComposeBccTags((prev) => [...prev, clean]);
-                                setComposeBcc("");
-                                return;
-                              }
-                            }
-                            setComposeBcc(val);
-                          }}
-                          onKeyDown={(e) => {
-                            if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeBcc.trim()) {
-                              e.preventDefault();
-                              const clean = composeBcc.replace(/[,\s]+$/, "").trim();
-                              if (clean) {
-                                setComposeBccTags((prev) => [...prev, clean]);
-                                setComposeBcc("");
-                              }
-                            } else if (e.key === "Backspace" && !composeBcc && composeBccTags.length > 0) {
-                              setComposeBccTags((prev) => prev.slice(0, -1));
-                            }
-                          }}
-                          placeholder={composeBccTags.length === 0 ? "Destinataires en copie cachée" : "Ajouter Cci..."}
-                          className="flex-1 min-w-[140px] focus:outline-none text-sm bg-transparent placeholder-slate-400 py-1"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex px-5 py-3 border-b border-slate-100 items-center focus-within:bg-blue-50/30 transition-colors">
-                    <input
-                      type="text"
-                      value={composeSubject}
-                      onChange={(e) => setComposeSubject(e.target.value)}
-                      placeholder="Objet du message"
-                      className="flex-1 focus:outline-none text-sm font-semibold placeholder-slate-400 bg-transparent text-slate-900"
-                    />
-                  </div>
-
-                  {/* Barre de style & préférences typographiques (Police, Taille, Couleur, Signature) */}
-                  <div className="flex flex-wrap items-center gap-2 px-5 py-2 bg-slate-50/70 border-b border-slate-100 text-xs">
-                    {/* Police */}
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-400 font-medium">Police:</span>
-                      <select
-                        value={mailSettings.fontFamily}
-                        onChange={(e) => {
-                          const updated = { ...mailSettings, fontFamily: e.target.value };
-                          setMailSettings(updated);
-                          saveMailSettingsToStorage(updated, userEmail);
-                        }}
-                        className="p-1 bg-white border border-slate-200 rounded text-xs text-slate-700 focus:outline-none focus:border-blue-500"
-                      >
-                        {AVAILABLE_FONTS.map((f) => (
-                          <option key={f.value} value={f.value}>{f.label.split(" (")[0]}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Taille */}
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-400 font-medium">Taille:</span>
-                      <select
-                        value={mailSettings.fontSize}
-                        onChange={(e) => {
-                          const updated = { ...mailSettings, fontSize: e.target.value };
-                          setMailSettings(updated);
-                          saveMailSettingsToStorage(updated, userEmail);
-                        }}
-                        className="p-1 bg-white border border-slate-200 rounded text-xs text-slate-700 focus:outline-none focus:border-blue-500"
-                      >
-                        {AVAILABLE_FONT_SIZES.map((s) => (
-                          <option key={s.value} value={s.value}>{s.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Couleur */}
-                    <div className="flex items-center gap-1.5 ml-1">
-                      <span className="text-slate-400 font-medium">Couleur:</span>
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
                       <input
-                        type="color"
-                        value={mailSettings.textColor}
+                        ref={composeToInputRef}
+                        type="text"
+                        value={composeTo}
                         onChange={(e) => {
-                          const updated = { ...mailSettings, textColor: e.target.value };
-                          setMailSettings(updated);
-                          saveMailSettingsToStorage(updated, userEmail);
+                          const val = e.target.value;
+                          if (val.endsWith(" ") || val.endsWith(",")) {
+                            const clean = val.replace(/[,\s]+$/, "").trim();
+                            if (clean) {
+                              setComposeToTags((prev) => [...prev, clean]);
+                              setComposeTo("");
+                              return;
+                            }
+                          }
+                          setComposeTo(val);
                         }}
-                        className="h-6 w-6 rounded cursor-pointer border border-slate-200 p-0 bg-transparent"
-                        title="Couleur du texte"
+                        onKeyDown={(e) => {
+                          if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeTo.trim()) {
+                            e.preventDefault();
+                            const clean = composeTo.replace(/[,\s]+$/, "").trim();
+                            if (clean) {
+                              setComposeToTags((prev) => [...prev, clean]);
+                              setComposeTo("");
+                            }
+                          } else if (e.key === "Backspace" && !composeTo && composeToTags.length > 0) {
+                            setComposeToTags((prev) => prev.slice(0, -1));
+                          }
+                        }}
+                        placeholder={composeToTags.length === 0 ? "Destinataires (espace ou Entrée pour valider)" : "Ajouter..."}
+                        className="flex-1 min-w-[160px] focus:outline-none text-xs bg-transparent placeholder-slate-400 py-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCcBcc(!showCcBcc)}
+                        className={`text-[11px] font-semibold ml-auto uppercase tracking-wider px-2 py-0.5 rounded transition-colors ${
+                          showCcBcc
+                            ? "bg-blue-100 text-blue-700"
+                            : "text-slate-400 hover:text-blue-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        Cc / Cci
+                      </button>
+                    </div>
+
+                    {showCcBcc && (
+                      <div className="animate-in slide-in-from-top-2 duration-150">
+                        {/* Champ Cc avec tags */}
+                        <div className="flex flex-wrap px-4 py-1.5 border-b border-slate-100 items-center gap-1.5 bg-slate-50/50 focus-within:bg-blue-50/20 transition-colors">
+                          <span className="text-xs font-medium text-slate-500 mr-2 w-6">Cc</span>
+                          {composeCcTags.map((tag, idx) => (
+                            <span
+                              key={idx}
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-slate-200 text-slate-800 rounded-full text-xs font-semibold"
+                            >
+                              {tag}
+                              <button
+                                type="button"
+                                onClick={() => setComposeCcTags((prev) => prev.filter((_, i) => i !== idx))}
+                                className="text-slate-500 hover:text-slate-800"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                          <input
+                            type="text"
+                            value={composeCc}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val.endsWith(" ") || val.endsWith(",")) {
+                                const clean = val.replace(/[,\s]+$/, "").trim();
+                                if (clean) {
+                                  setComposeCcTags((prev) => [...prev, clean]);
+                                  setComposeCc("");
+                                  return;
+                                }
+                              }
+                              setComposeCc(val);
+                            }}
+                            onKeyDown={(e) => {
+                              if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeCc.trim()) {
+                                e.preventDefault();
+                                const clean = composeCc.replace(/[,\s]+$/, "").trim();
+                                if (clean) {
+                                  setComposeCcTags((prev) => [...prev, clean]);
+                                  setComposeCc("");
+                                }
+                              } else if (e.key === "Backspace" && !composeCc && composeCcTags.length > 0) {
+                                setComposeCcTags((prev) => prev.slice(0, -1));
+                              }
+                            }}
+                            placeholder={composeCcTags.length === 0 ? "Destinataires en copie" : "Ajouter Cc..."}
+                            className="flex-1 min-w-[140px] focus:outline-none text-xs bg-transparent placeholder-slate-400 py-1"
+                          />
+                        </div>
+
+                        {/* Champ Cci avec tags */}
+                        <div className="flex flex-wrap px-4 py-1.5 border-b border-slate-100 items-center gap-1.5 bg-slate-50/50 focus-within:bg-blue-50/20 transition-colors">
+                          <span className="text-xs font-medium text-slate-500 mr-2 w-6">Cci</span>
+                          {composeBccTags.map((tag, idx) => (
+                            <span
+                              key={idx}
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-slate-200 text-slate-800 rounded-full text-xs font-semibold"
+                            >
+                              {tag}
+                              <button
+                                type="button"
+                                onClick={() => setComposeBccTags((prev) => prev.filter((_, i) => i !== idx))}
+                                className="text-slate-500 hover:text-slate-800"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                          <input
+                            type="text"
+                            value={composeBcc}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val.endsWith(" ") || val.endsWith(",")) {
+                                const clean = val.replace(/[,\s]+$/, "").trim();
+                                if (clean) {
+                                  setComposeBccTags((prev) => [...prev, clean]);
+                                  setComposeBcc("");
+                                  return;
+                                }
+                              }
+                              setComposeBcc(val);
+                            }}
+                            onKeyDown={(e) => {
+                              if ((e.key === "Enter" || e.key === " " || e.key === ",") && composeBcc.trim()) {
+                                e.preventDefault();
+                                const clean = composeBcc.replace(/[,\s]+$/, "").trim();
+                                if (clean) {
+                                  setComposeBccTags((prev) => [...prev, clean]);
+                                  setComposeBcc("");
+                                }
+                              } else if (e.key === "Backspace" && !composeBcc && composeBccTags.length > 0) {
+                                setComposeBccTags((prev) => prev.slice(0, -1));
+                              }
+                            }}
+                            placeholder={composeBccTags.length === 0 ? "Destinataires en copie cachée" : "Ajouter Cci..."}
+                            className="flex-1 min-w-[140px] focus:outline-none text-xs bg-transparent placeholder-slate-400 py-1"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Objet */}
+                    <div className="flex px-4 py-2 border-b border-slate-100 items-center">
+                      <input
+                        type="text"
+                        value={composeSubject}
+                        onChange={(e) => setComposeSubject(e.target.value)}
+                        placeholder="Objet"
+                        className="flex-1 focus:outline-none text-xs font-medium placeholder-slate-400 bg-transparent text-slate-900"
                       />
                     </div>
 
-                    {/* Insérer la signature */}
-                    {mailSettings.signature && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setComposeBody((prev) => `${prev}\n\n${mailSettings.signature}`);
-                        }}
-                        className="ml-auto text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors"
-                        title="Insérer ma signature configurée"
-                      >
-                        + Insérer signature
-                      </button>
+                    {/* Barre de style typographique & signature Style Gmail */}
+                    <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 bg-slate-50/70 border-b border-slate-100 text-[11px]">
+                      {/* Police */}
+                      <div className="flex items-center gap-1">
+                        <span className="text-slate-400">Police:</span>
+                        <select
+                          value={mailSettings.fontFamily}
+                          onChange={(e) => {
+                            const updated = { ...mailSettings, fontFamily: e.target.value };
+                            setMailSettings(updated);
+                            saveMailSettingsToStorage(updated, userEmail);
+                          }}
+                          className="p-0.5 bg-white border border-slate-200 rounded text-[11px] text-slate-700 focus:outline-none focus:border-blue-500"
+                        >
+                          {AVAILABLE_FONTS.map((f) => (
+                            <option key={f.value} value={f.value}>{f.label.split(" (")[0]}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Taille */}
+                      <div className="flex items-center gap-1">
+                        <span className="text-slate-400">Taille:</span>
+                        <select
+                          value={mailSettings.fontSize}
+                          onChange={(e) => {
+                            const updated = { ...mailSettings, fontSize: e.target.value };
+                            setMailSettings(updated);
+                            saveMailSettingsToStorage(updated, userEmail);
+                          }}
+                          className="p-0.5 bg-white border border-slate-200 rounded text-[11px] text-slate-700 focus:outline-none focus:border-blue-500"
+                        >
+                          {AVAILABLE_FONT_SIZES.map((s) => (
+                            <option key={s.value} value={s.value}>{s.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Couleur */}
+                      <div className="flex items-center gap-1 ml-1">
+                        <span className="text-slate-400">Couleur:</span>
+                        <input
+                          type="color"
+                          value={mailSettings.textColor}
+                          onChange={(e) => {
+                            const updated = { ...mailSettings, textColor: e.target.value };
+                            setMailSettings(updated);
+                            saveMailSettingsToStorage(updated, userEmail);
+                          }}
+                          className="h-5 w-5 rounded cursor-pointer border border-slate-200 p-0 bg-transparent"
+                          title="Couleur du texte"
+                        />
+                      </div>
+
+                      {/* Insérer signature */}
+                      {mailSettings.signature && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setComposeBody((prev) => `${prev}\n\n${mailSettings.signature}`);
+                          }}
+                          className="ml-auto text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-0.5 rounded transition-colors"
+                          title="Insérer ma signature configurée"
+                        >
+                          + Signature
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Zone de saisie du message */}
+                    <textarea
+                      ref={composeTextareaRef}
+                      value={composeBody}
+                      onChange={(e) => setComposeBody(e.target.value)}
+                      style={{
+                        fontFamily: mailSettings.fontFamily,
+                        fontSize: mailSettings.fontSize,
+                        color: mailSettings.textColor,
+                      }}
+                      placeholder="Rédigez votre message..."
+                      className="flex-1 p-4 focus:outline-none resize-none text-xs leading-relaxed bg-transparent min-h-[220px]"
+                    />
+
+                    {/* Fichiers joints */}
+                    {composeAttachments.length > 0 && (
+                      <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 space-y-1.5">
+                        <p className="text-[11px] font-semibold text-slate-500">
+                          Pièces jointes ({composeAttachments.length})
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {composeAttachments.map((att, idx) => (
+                            <div
+                              key={idx}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 shadow-2xs"
+                            >
+                              <Paperclip className="h-3 w-3 text-blue-600" />
+                              <span className="truncate max-w-[160px]">{att.filename}</span>
+                              <span className="text-slate-400 text-[10px]">({formatFileSize(att.size)})</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveComposeAttachment(idx)}
+                                className="text-slate-400 hover:text-red-600 ml-1"
+                                title="Retirer"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
 
-                  <textarea
-                    ref={composeTextareaRef}
-                    value={composeBody}
-                    onChange={(e) => setComposeBody(e.target.value)}
-                    style={{
-                      fontFamily: mailSettings.fontFamily,
-                      fontSize: mailSettings.fontSize,
-                      color: mailSettings.textColor,
-                    }}
-                    placeholder="Rédigez votre message ici..."
-                    className="flex-1 p-5 focus:outline-none resize-none text-sm leading-relaxed bg-transparent min-h-[220px]"
-                  />
+                  {/* Composer Footer Style Gmail */}
+                  <div className="px-4 py-2.5 border-t border-slate-100 bg-white flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {/* Send button (Pill Gmail) */}
+                      <button
+                        onClick={handleSendEmail}
+                        disabled={isSending}
+                        className="px-6 py-2 bg-[#0b57d0] hover:bg-[#0842a0] text-white rounded-full text-xs font-semibold transition-colors flex items-center gap-2 shadow-xs disabled:opacity-60 cursor-pointer"
+                      >
+                        <span>{isSending ? "Envoi..." : "Envoyer"}</span>
+                        <Send className={`h-3.5 w-3.5 ${isSending ? "animate-pulse" : ""}`} />
+                      </button>
 
-                  {/* Liste des fichiers joints avant envoi */}
-                  {composeAttachments.length > 0 && (
-                    <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 space-y-2">
-                      <p className="text-xs font-semibold text-slate-500">
-                        Pièces jointes ({composeAttachments.length})
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {composeAttachments.map((att, idx) => (
-                          <div
-                            key={idx}
-                            className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 shadow-sm"
-                          >
-                            <Paperclip className="h-3.5 w-3.5 text-blue-600" />
-                            <span className="truncate max-w-[180px]">{att.filename}</span>
-                            <span className="text-slate-400">({formatFileSize(att.size)})</span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveComposeAttachment(idx)}
-                              className="text-slate-400 hover:text-red-600 ml-1"
-                              title="Retirer ce fichier"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
+                      {/* Attach button */}
+                      <label
+                        className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full cursor-pointer transition-colors"
+                        title="Joindre des fichiers"
+                      >
+                        <input
+                          type="file"
+                          multiple
+                          onChange={handleFileChange}
+                          className="hidden"
+                        />
+                        <Paperclip className="h-4 w-4" />
+                      </label>
+
+                      {/* Save draft button */}
+                      <button
+                        type="button"
+                        onClick={handleSaveDraft}
+                        disabled={isSavingDraft}
+                        className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors flex items-center gap-1.5"
+                        title="Enregistrer dans les brouillons"
+                      >
+                        <Save className="h-3.5 w-3.5 text-slate-400" />
+                        <span>Brouillon</span>
+                      </button>
                     </div>
-                  )}
-                </div>
 
-                {/* Composer Footer */}
-                <div className="px-5 py-3 border-t border-slate-100 bg-white flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                    {/* Discard button */}
                     <button
-                      onClick={handleSendEmail}
-                      disabled={isSending}
-                      className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors flex items-center shadow-md shadow-blue-500/20 disabled:opacity-70"
+                      onClick={() => {
+                        setIsComposing(false);
+                        setShowCcBcc(false);
+                        setEditingDraftId(null);
+                        setComposeAttachments([]);
+                        setComposerMinimized(false);
+                        setComposerMaximized(false);
+                      }}
+                      className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                      title="Supprimer le brouillon"
                     >
-                      {isSending ? "Envoi..." : "Envoyer"}
-                      <Send className={`h-4 w-4 ml-2 ${isSending ? "animate-pulse" : ""}`} />
-                    </button>
-
-                    <label
-                      className="p-2.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl cursor-pointer transition-colors flex items-center gap-1.5 text-xs font-medium"
-                      title="Joindre un ou plusieurs fichiers"
-                    >
-                      <input
-                        type="file"
-                        multiple
-                        onChange={handleFileChange}
-                        className="hidden"
-                      />
-                      <Paperclip className="h-5 w-5" />
-                    </label>
-
-                    <button
-                      type="button"
-                      onClick={handleSaveDraft}
-                      disabled={isSavingDraft}
-                      className="px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors flex items-center gap-1.5"
-                      title="Enregistrer dans les brouillons"
-                    >
-                      <Save className="h-4 w-4 text-slate-400" />
-                      Brouillon
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
-
-                  <button
-                    onClick={() => {
-                      setIsComposing(false);
-                      setShowCcBcc(false);
-                      setEditingDraftId(null);
-                      setComposeAttachments([]);
-                    }}
-                    className="p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                    title="Annuler et fermer"
-                  >
-                    <Trash2 className="h-5 w-5" />
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+                </>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {/* MODALE PARAMÈTRES DU WEBMAIL */}
