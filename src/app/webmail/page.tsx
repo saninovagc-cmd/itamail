@@ -44,7 +44,11 @@ import {
   ShieldCheck,
   Eye,
   Info,
-  ExternalLink
+  ExternalLink,
+  ChevronsUpDown,
+  Tag,
+  Users,
+  Bell
 } from "lucide-react";
 import Link from "next/link";
 import { 
@@ -207,11 +211,134 @@ function getAvatarColor(identifier: string): string {
   return colors[index];
 }
 
+export type EmailThread = {
+  threadKey: string;
+  subject: string;
+  messages: EmailItem[];
+  latestMessage: EmailItem;
+  participantsSummary: string;
+  count: number;
+  unread: boolean;
+  starred: boolean;
+  folder: string;
+  date: string;
+  fullDate: string;
+  hasAttachments: boolean;
+  attachments: AttachmentItem[];
+  preview: string;
+};
+
+function buildThreads(emailsList: EmailItem[], myEmail: string | null): EmailThread[] {
+  const groups: Record<string, EmailItem[]> = {};
+
+  emailsList.forEach((email) => {
+    const cleanSubj = normalizeSubject(email.subject);
+    const key = cleanSubj && cleanSubj !== "(sans objet)" ? cleanSubj : `single_${email.id}`;
+    if (!groups[key]) {
+      groups[key] = [];
+    }
+    groups[key].push(email);
+  });
+
+  const myEmailLower = (myEmail || "").toLowerCase().trim();
+
+  const threads: EmailThread[] = Object.entries(groups).map(([threadKey, msgs]) => {
+    // Trier chronologiquement (le plus ancien en premier, le plus récent en dernier)
+    const sorted = [...msgs].sort((a, b) => {
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return dateA - dateB;
+    });
+
+    const latest = sorted[sorted.length - 1];
+    const unread = sorted.some((m) => !m.read);
+    const starred = sorted.some((m) => m.starred);
+    const count = sorted.length;
+
+    // Agréger les pièces jointes uniques
+    const allAttachments: AttachmentItem[] = [];
+    const attNames = new Set<string>();
+    sorted.forEach((m) => {
+      (m.attachments || []).forEach((att) => {
+        const identifier = att.filename || att.id || "";
+        if (identifier && !attNames.has(identifier)) {
+          attNames.add(identifier);
+          allAttachments.push(att);
+        }
+      });
+    });
+
+    // Générer le résumé des participants style Gmail
+    const participantNames: string[] = [];
+    sorted.forEach((m) => {
+      const isMe = m.folder === "sent" || (m.email && m.email.toLowerCase().trim() === myEmailLower);
+      const name = isMe
+        ? "moi"
+        : (m.sender || m.email || "Contact")
+            .split(" ")[0]
+            .replace(/[,<].*$/, "")
+            .trim();
+      if (name && !participantNames.includes(name)) {
+        participantNames.push(name);
+      }
+    });
+
+    let participantsSummary = "";
+    if (participantNames.length === 0) {
+      participantsSummary = latest.sender || "Contact";
+    } else if (participantNames.length === 1) {
+      participantsSummary = participantNames[0];
+    } else if (participantNames.length === 2) {
+      participantsSummary = `${participantNames[0]}, ${participantNames[1]}`;
+    } else {
+      participantsSummary = `${participantNames[0]} .. ${participantNames[participantNames.length - 1]}`;
+    }
+
+    if (count > 1) {
+      participantsSummary = `${participantsSummary} ${count}`;
+    }
+
+    // Sujet propre
+    const displaySubject =
+      sorted[0].subject.replace(/^(\s*(re|fwd|fw|tr)\s*:\s*)+/gi, "").trim() ||
+      latest.subject ||
+      "(Sans objet)";
+
+    return {
+      threadKey,
+      subject: displaySubject,
+      messages: sorted,
+      latestMessage: latest,
+      participantsSummary,
+      count,
+      unread,
+      starred,
+      folder: latest.folder,
+      date: latest.date,
+      fullDate: latest.fullDate || latest.date,
+      hasAttachments: allAttachments.length > 0,
+      attachments: allAttachments,
+      preview: latest.preview || latest.body || "",
+    };
+  });
+
+  // Trier les threads par date du message le plus récent (plus récent en premier)
+  threads.sort((a, b) => {
+    const dateA = a.latestMessage.created_at ? new Date(a.latestMessage.created_at).getTime() : 0;
+    const dateB = b.latestMessage.created_at ? new Date(b.latestMessage.created_at).getTime() : 0;
+    return dateB - dateA;
+  });
+
+  return threads;
+}
+
 export default function WebmailPage() {
   const [emails, setEmails] = useState<EmailItem[]>([]);
   const [mailboxId, setMailboxId] = useState<string | null>(null);
   const [activeFolder, setActiveFolder] = useState("inbox");
   const [activeTabFilter, setActiveTabFilter] = useState<"all" | "unread" | "starred">("all");
+  const [inboxCategory, setInboxCategory] = useState<"principale" | "promotions" | "social" | "notifications">("principale");
+  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<EmailItem | null>(null);
   const [isLoadingEmailBody, setIsLoadingEmailBody] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -746,6 +873,219 @@ export default function WebmailPage() {
     }
   };
 
+  // Sélectionner une discussion complète (Fil de messages)
+  const handleSelectThread = async (thread: EmailThread) => {
+    setSelectedThreadKey(thread.threadKey);
+    setSelectedEmail(thread.latestMessage);
+
+    // Initialiser les messages dépliés : le dernier est ouvert par défaut, les anciens sont repliés
+    const newMap: Record<string | number, boolean> = {};
+    thread.messages.forEach((m, idx) => {
+      newMap[m.id] = idx === thread.messages.length - 1;
+    });
+    setExpandedThreadIds(newMap);
+
+    // Marquer tous les messages du fil comme lus s'il y en a de non lus
+    const unreadMsgs = thread.messages.filter((m) => !m.read);
+    if (unreadMsgs.length > 0) {
+      setEmails((prev) =>
+        prev.map((item) =>
+          item.folder === thread.folder &&
+          (normalizeSubject(item.subject) === thread.threadKey || item.id === thread.latestMessage.id)
+            ? { ...item, read: true }
+            : item
+        )
+      );
+
+      unreadMsgs.forEach((m) => {
+        fetch("/api/webmail/message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageId: m.id, markAsRead: true }),
+        }).catch(() => {});
+      });
+    }
+
+    // Charger le corps du dernier message s'il n'est pas encore présent
+    const latest = thread.latestMessage;
+    if (!latest.body_html && !latest.body_text) {
+      setIsLoadingEmailBody(true);
+      try {
+        const res = await fetch("/api/webmail/message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageId: latest.id, markAsRead: true }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const plainPreview = data.body_text || stripHtmlTags(data.body_html) || "";
+          const updatedItem: EmailItem = {
+            ...latest,
+            sender: data.sender_name || latest.sender,
+            to_all: Array.isArray(data.to_all) ? data.to_all : latest.to_all,
+            cc: Array.isArray(data.cc) ? data.cc : latest.cc,
+            body_text: data.body_text ?? latest.body_text,
+            body_html: data.body_html ?? latest.body_html,
+            body: data.body_text || stripHtmlTags(data.body_html) || latest.body,
+            preview: plainPreview
+              ? plainPreview.substring(0, 80) + (plainPreview.length > 80 ? "..." : "")
+              : latest.preview,
+            resend_id: data.resend_id || latest.resend_id,
+            attachments: Array.isArray(data.attachments) ? data.attachments : latest.attachments,
+            read: true,
+          };
+          setSelectedEmail(updatedItem);
+          setEmails((prev) => prev.map((item) => (item.id === latest.id ? updatedItem : item)));
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsLoadingEmailBody(false);
+      }
+    }
+  };
+
+  // Déplier / Replier un message spécifique dans le fil
+  const handleToggleExpandMessage = async (msg: EmailItem) => {
+    const willExpand = !expandedThreadIds[msg.id];
+    setExpandedThreadIds((prev) => ({
+      ...prev,
+      [msg.id]: willExpand,
+    }));
+
+    if (willExpand && !msg.body_html && !msg.body_text) {
+      try {
+        const res = await fetch("/api/webmail/message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageId: msg.id, markAsRead: true }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const plainPreview = data.body_text || stripHtmlTags(data.body_html) || "";
+          const updatedItem: EmailItem = {
+            ...msg,
+            body_text: data.body_text ?? msg.body_text,
+            body_html: data.body_html ?? msg.body_html,
+            body: data.body_text || stripHtmlTags(data.body_html) || msg.body,
+            preview: plainPreview
+              ? plainPreview.substring(0, 80) + (plainPreview.length > 80 ? "..." : "")
+              : msg.preview,
+            attachments: Array.isArray(data.attachments) ? data.attachments : msg.attachments,
+            read: true,
+          };
+          setEmails((prev) => prev.map((item) => (item.id === msg.id ? updatedItem : item)));
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
+
+  // Déplier ou replier tous les messages du fil
+  const handleToggleAllMessages = () => {
+    if (!selectedThread) return;
+    const allExpanded = selectedThread.messages.every((m) => expandedThreadIds[m.id]);
+    const newMap: Record<string | number, boolean> = {};
+    selectedThread.messages.forEach((m) => {
+      newMap[m.id] = !allExpanded;
+    });
+    setExpandedThreadIds(newMap);
+  };
+
+  // Suivre / Retirer le suivi d'une discussion entière
+  const handleToggleStarThread = (thread: EmailThread, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const nextStarred = !thread.starred;
+    setEmails((prev) =>
+      prev.map((item) => {
+        if (
+          item.folder === thread.folder &&
+          (normalizeSubject(item.subject) === thread.threadKey || item.id === thread.latestMessage.id)
+        ) {
+          return { ...item, starred: nextStarred };
+        }
+        return item;
+      })
+    );
+
+    thread.messages.forEach(async (m) => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        const { data: dbMsg } = await supabase
+          .from("messages")
+          .select("body_html")
+          .eq("id", m.id)
+          .single();
+        const currentHtml = dbMsg?.body_html || m.body_html || "";
+        const { cleanHtml, meta } = parseMetaFromHtml(currentHtml);
+        const updatedMeta = { ...(meta || {}), starred: nextStarred };
+        const newBodyHtml = buildHtmlWithMeta(cleanHtml, updatedMeta);
+        await supabase.from("messages").update({ body_html: newBodyHtml }).eq("id", m.id);
+      } catch {}
+    });
+
+    showToast(nextStarred ? "Discussion suivie" : "Discussion non suivie");
+  };
+
+  // Déplacer une discussion entière vers un dossier
+  const handleMoveThreadToFolder = (thread: EmailThread, targetFolder: string, labelAction: string) => {
+    setEmails((prev) =>
+      prev.map((item) => {
+        if (
+          item.folder === thread.folder &&
+          (normalizeSubject(item.subject) === thread.threadKey || item.id === thread.latestMessage.id)
+        ) {
+          return { ...item, folder: targetFolder };
+        }
+        return item;
+      })
+    );
+
+    if (selectedThreadKey === thread.threadKey) {
+      setSelectedThreadKey(null);
+      setSelectedEmail(null);
+    }
+
+    thread.messages.forEach(async (m) => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        await supabase.from("messages").update({ folder: targetFolder }).eq("id", m.id);
+      } catch {}
+    });
+
+    showToast(labelAction);
+  };
+
+  // Marquer toute une discussion comme lue / non lue
+  const handleToggleReadThread = (thread: EmailThread, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const nextRead = !thread.unread;
+    setEmails((prev) =>
+      prev.map((item) => {
+        if (
+          item.folder === thread.folder &&
+          (normalizeSubject(item.subject) === thread.threadKey || item.id === thread.latestMessage.id)
+        ) {
+          return { ...item, read: nextRead };
+        }
+        return item;
+      })
+    );
+
+    thread.messages.forEach(async (m) => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        await supabase.from("messages").update({ is_read: nextRead }).eq("id", m.id);
+      } catch {}
+    });
+
+    showToast(nextRead ? "Discussion marquée comme lue" : "Discussion marquée comme non lue");
+  };
+
   // Enregistrer en brouillon
   const handleSaveDraft = async () => {
     const finalTo = [
@@ -1004,6 +1344,10 @@ ${composeBody}
     );
   });
 
+  // Calcul des discussions groupées (Threads)
+  const threads = buildThreads(filteredEmails, userEmail);
+  const selectedThread = threads.find((t) => t.threadKey === selectedThreadKey) || null;
+
   if (!isClient || !userEmail) return null;
 
   return (
@@ -1248,214 +1592,306 @@ ${composeBody}
         </div>
 
         {/* CONTENEUR BLANC FLOTTANT (STYLE GOOGLE WORKSPACE) */}
-        <div className="flex-1 flex mr-3 mb-3 bg-white rounded-2xl shadow-xs border border-slate-200/80 overflow-hidden">
-          {/* LISTE DES MESSAGES (MIDDLE COLUMN) */}
-          <div className={`w-full lg:w-[390px] ${selectedEmail ? "hidden lg:flex" : "flex"} border-r border-slate-200/80 flex-col flex-shrink-0 bg-white`}>
-            {/* Top Toolbar Liste */}
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-white sticky top-0 z-10">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-slate-900 tracking-tight">
-                  {activeFolder === "inbox"
-                    ? "Boîte de réception"
-                    : activeFolder === "starred"
-                    ? "Messages suivis"
-                    : activeFolder === "sent"
-                    ? "Messages envoyés"
-                    : activeFolder === "drafts"
-                    ? "Brouillons"
-                    : activeFolder === "spams"
-                    ? "Spams"
-                    : activeFolder === "folders"
-                    ? "Archives"
-                    : "Corbeille"}
-                </h2>
-                <span className="text-xs text-slate-400 font-medium">
-                  ({filteredEmails.length})
-                </span>
-              </div>
-
-              {/* Filtres rapides : Tous, Non lus, Favoris */}
-              <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-xs font-semibold">
-                <button
-                  type="button"
-                  onClick={() => setActiveTabFilter("all")}
-                  className={`px-2 py-1 rounded-md transition-colors ${
-                    activeTabFilter === "all" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  Tous
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTabFilter("unread")}
-                  className={`px-2 py-1 rounded-md transition-colors ${
-                    activeTabFilter === "unread" ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  Non lus
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTabFilter("starred")}
-                  className={`px-2 py-1 rounded-md transition-colors ${
-                    activeTabFilter === "starred" ? "bg-white text-amber-600 shadow-xs" : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  ★
-                </button>
-              </div>
-            </div>
-
-            {/* Email Rows */}
-            <div className="overflow-y-auto flex-1 custom-scrollbar divide-y divide-slate-100/80">
-              {filteredEmails.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-56 text-slate-400 px-4 text-center">
-                  <div className="h-14 w-14 rounded-full bg-slate-50 flex items-center justify-center mb-3 text-slate-300">
-                    <Inbox className="h-7 w-7" />
-                  </div>
-                  <p className="text-sm font-semibold text-slate-600">Aucun message</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Ce dossier est actuellement vide.</p>
+        <div className="flex-1 flex flex-col mr-3 mb-3 bg-white rounded-2xl shadow-xs border border-slate-200/80 overflow-hidden">
+          {!selectedThread ? (
+            /* ============================================================ */
+            /* 1. VUE LISTE GMAIL DES DISCUSSIONS (PLEINE LARGEUR)          */
+            /* ============================================================ */
+            <div className="flex-1 flex flex-col h-full overflow-hidden bg-white">
+              {/* Onglets de catégories (comme sur la capture Gmail : Principale, Promotions, Réseaux sociaux, Notifications) */}
+              {activeFolder === "inbox" && (
+                <div className="flex items-center border-b border-slate-200/80 bg-white flex-shrink-0 overflow-x-auto custom-scrollbar select-none">
+                  <button
+                    type="button"
+                    onClick={() => setInboxCategory("principale")}
+                    className={`flex items-center gap-3 px-6 py-3.5 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${
+                      inboxCategory === "principale"
+                        ? "border-[#0b57d0] text-[#0b57d0] bg-blue-50/15"
+                        : "border-transparent text-[#444746] hover:bg-slate-50"
+                    }`}
+                  >
+                    <Inbox className="h-4 w-4" />
+                    <span>Principale</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInboxCategory("promotions")}
+                    className={`flex items-center gap-3 px-6 py-3.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                      inboxCategory === "promotions"
+                        ? "border-[#0b57d0] text-[#0b57d0] bg-blue-50/15"
+                        : "border-transparent text-[#444746] hover:bg-slate-50"
+                    }`}
+                  >
+                    <Tag className="h-4 w-4" />
+                    <span>Promotions</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInboxCategory("social")}
+                    className={`flex items-center gap-3 px-6 py-3.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                      inboxCategory === "social"
+                        ? "border-[#0b57d0] text-[#0b57d0] bg-blue-50/15"
+                        : "border-transparent text-[#444746] hover:bg-slate-50"
+                    }`}
+                  >
+                    <Users className="h-4 w-4" />
+                    <span>Réseaux sociaux</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInboxCategory("notifications")}
+                    className={`flex items-center gap-3 px-6 py-3.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                      inboxCategory === "notifications"
+                        ? "border-[#0b57d0] text-[#0b57d0] bg-blue-50/15"
+                        : "border-transparent text-[#444746] hover:bg-slate-50"
+                    }`}
+                  >
+                    <Info className="h-4 w-4" />
+                    <span>Notifications</span>
+                  </button>
                 </div>
-              ) : (
-                filteredEmails.map((email) => {
-                  const isSelected = selectedEmail?.id === email.id;
-                  const isUnread = !email.read;
-                  return (
-                    <div
-                      key={email.id}
-                      onClick={() => handleSelectEmail(email)}
-                      className={`px-4 py-3 cursor-pointer transition-all duration-150 relative group ${
-                        isSelected
-                          ? "bg-[#eaf1fb] border-l-4 border-blue-600"
-                          : isUnread
-                          ? "bg-blue-50/25 hover:bg-slate-50/80"
-                          : "hover:bg-slate-50/80"
+              )}
+
+              {/* Sous-barre d'outils (Checkbox, Actualiser, Plus, Filtres rapides, Pagination) */}
+              <div className="h-12 px-4 border-b border-slate-100 flex items-center justify-between bg-white text-slate-600 text-xs flex-shrink-0 select-none">
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center p-1.5 hover:bg-slate-100 rounded cursor-pointer text-slate-500">
+                    <div className="h-4 w-4 border border-slate-300 rounded-xs" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fetchMessages(userEmail || "")}
+                    className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
+                    title="Actualiser"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
+                  </button>
+                  <button
+                    type="button"
+                    className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
+                    title="Autres options"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </button>
+
+                  {/* Filtres rapides : Tous, Non lus, Favoris */}
+                  <div className="flex items-center bg-slate-100 p-0.5 rounded-lg ml-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTabFilter("all")}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                        activeTabFilter === "all" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-500 hover:text-slate-700"
                       }`}
                     >
-                      {/* Top Row : Star, Sender, Attachment, Date */}
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          {/* Star interactive */}
+                      Tous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTabFilter("unread")}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                        activeTabFilter === "unread" ? "bg-white text-blue-600 shadow-2xs" : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      Non lus
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTabFilter("starred")}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                        activeTabFilter === "starred" ? "bg-white text-amber-600 shadow-2xs" : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      ★
+                    </button>
+                  </div>
+                </div>
+
+                {/* Pagination */}
+                <div className="flex items-center gap-3 text-slate-500 font-medium">
+                  <span>
+                    {threads.length === 0 ? "0 discussion" : `1-${threads.length} sur ${threads.length}`}
+                  </span>
+                </div>
+              </div>
+
+              {/* Liste des discussions (Lignes complètes style Gmail) */}
+              <div className="overflow-y-auto flex-1 custom-scrollbar divide-y divide-slate-100">
+                {threads.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-64 text-slate-400 px-4 text-center">
+                    <div className="h-16 w-16 rounded-full bg-slate-50 flex items-center justify-center mb-3 text-slate-300">
+                      <Inbox className="h-8 w-8" />
+                    </div>
+                    <p className="text-sm font-semibold text-slate-700">Aucune discussion</p>
+                    <p className="text-xs text-slate-400 mt-1">Votre boîte de réception est propre et à jour.</p>
+                  </div>
+                ) : (
+                  threads.map((thread) => {
+                    const isUnread = thread.unread;
+                    return (
+                      <div
+                        key={thread.threadKey}
+                        onClick={() => handleSelectThread(thread)}
+                        className={`flex items-center px-4 py-2.5 cursor-pointer transition-colors relative group select-none ${
+                          isUnread
+                            ? "bg-white font-bold text-slate-900"
+                            : "bg-[#f2f6fc]/40 text-[#444746] hover:bg-slate-50/90"
+                        }`}
+                      >
+                        {/* Checkbox & Étoile */}
+                        <div
+                          className="flex items-center gap-2 mr-3 flex-shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="h-4 w-4 border border-slate-300 rounded-xs group-hover:border-slate-500" />
                           <button
                             type="button"
-                            onClick={(e) => handleToggleStar(email, e)}
-                            className={`p-0.5 rounded-sm transition-colors ${
-                              email.starred
+                            onClick={(e) => handleToggleStarThread(thread, e)}
+                            className={`p-0.5 rounded transition-colors ${
+                              thread.starred
                                 ? "text-amber-400"
                                 : "text-slate-300 hover:text-amber-400"
                             }`}
-                            title="Suivre / Important"
+                            title="Suivre la discussion"
                           >
-                            <Star className={`h-4 w-4 ${email.starred ? "fill-amber-400" : ""}`} />
+                            <Star className={`h-4 w-4 ${thread.starred ? "fill-amber-400" : ""}`} />
                           </button>
+                        </div>
 
-                          {/* Blue unread dot */}
+                        {/* Expéditeurs avec compteur (ex: SANINOVA .. moi 30, Ghislaine .. Jules 4, FORNEX) */}
+                        <div className="w-48 sm:w-56 flex-shrink-0 pr-3 truncate flex items-center gap-1.5">
                           {isUnread && (
-                            <span className="h-2 w-2 rounded-full bg-blue-600 flex-shrink-0" />
+                            <span className="h-2 w-2 rounded-full bg-blue-600 flex-shrink-0 mr-1" />
                           )}
-
-                          {/* Sender Initials Avatar */}
-                          <div
-                            className={`h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 shadow-2xs ${getAvatarColor(
-                              email.sender || email.email
-                            )}`}
-                          >
-                            {(email.sender || "M").charAt(0).toUpperCase()}
-                          </div>
-
-                          <h3
+                          <span
                             className={`text-sm truncate ${
                               isUnread ? "font-bold text-slate-900" : "font-medium text-slate-700"
                             }`}
                           >
-                            {activeFolder === "sent" || activeFolder === "drafts"
-                              ? `À : ${email.to || "(Destinataire non défini)"}`
-                              : email.sender}
-                          </h3>
-                        </div>
-
-                        {/* Date & Attachments (hidden on hover when quick actions show) */}
-                        <div className="flex items-center gap-1.5 flex-shrink-0 group-hover:hidden">
-                          {email.attachments && email.attachments.length > 0 && (
-                            <Paperclip className="h-3.5 w-3.5 text-slate-400" />
-                          )}
-                          <span
-                            className={`text-xs font-medium ${
-                              isUnread ? "text-blue-600 font-bold" : "text-slate-400"
-                            }`}
-                          >
-                            {email.date}
+                            {thread.participantsSummary}
                           </span>
                         </div>
 
-                        {/* GMAIL HOVER ACTIONS : Appears on row hover */}
-                        <div className="hidden group-hover:flex items-center gap-1 bg-white/95 px-1.5 py-0.5 rounded-lg shadow-xs border border-slate-200/80 z-10 flex-shrink-0">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMoveToFolder(email, "folders", "Message archivé");
-                            }}
-                            className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded"
-                            title="Archiver"
+                        {/* Sujet & Snippet de texte & Badges pièces jointes */}
+                        <div className="flex-1 min-w-0 pr-4">
+                          <div className="flex items-baseline gap-2 truncate">
+                            <span
+                              className={`text-sm truncate ${
+                                isUnread ? "font-bold text-slate-900" : "font-normal text-slate-800"
+                              }`}
+                            >
+                              {thread.subject}
+                            </span>
+                            <span className="text-xs text-slate-400 font-normal truncate hidden md:inline">
+                              — {thread.preview.replace(/[\n\r]+/g, " ")}
+                            </span>
+                          </div>
+
+                          {/* Badges de pièces jointes style Gmail (image.png, etc.) */}
+                          {thread.hasAttachments && thread.attachments.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              {thread.attachments.slice(0, 3).map((att, idx) => {
+                                const isImg =
+                                  att.content_type?.startsWith("image/") ||
+                                  /\.(png|jpg|jpeg|gif|webp)$/i.test(att.filename);
+                                const isPdf =
+                                  att.content_type === "application/pdf" ||
+                                  /\.pdf$/i.test(att.filename);
+                                const isSheet = /\.(xls|xlsx|csv)$/i.test(att.filename);
+
+                                return (
+                                  <span
+                                    key={idx}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDownloadAttachment(att, thread.latestMessage);
+                                    }}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-medium text-slate-700 shadow-2xs hover:border-slate-300 transition-colors"
+                                    title={`Télécharger ${att.filename}`}
+                                  >
+                                    {isImg ? (
+                                      <ImageIcon className="h-3 w-3 text-red-500" />
+                                    ) : isPdf ? (
+                                      <FileText className="h-3 w-3 text-red-600" />
+                                    ) : isSheet ? (
+                                      <FileText className="h-3 w-3 text-emerald-600" />
+                                    ) : (
+                                      <File className="h-3 w-3 text-blue-500" />
+                                    )}
+                                    <span className="truncate max-w-[130px]">{att.filename}</span>
+                                  </span>
+                                );
+                              })}
+                              {thread.attachments.length > 3 && (
+                                <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                  +{thread.attachments.length - 3}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Date (remplacée au survol par les boutons d'actions rapides) */}
+                        <div className="flex items-center flex-shrink-0">
+                          <span
+                            className={`text-xs text-right group-hover:hidden ${
+                              isUnread ? "font-bold text-slate-900" : "font-medium text-slate-500"
+                            }`}
                           >
-                            <Archive className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMoveToFolder(email, "trash", "Placé dans la corbeille");
-                            }}
-                            className="p-1 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded"
-                            title="Supprimer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleRead(email);
-                            }}
-                            className="p-1 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded"
-                            title={isUnread ? "Marquer comme lu" : "Marquer comme non lu"}
-                          >
-                            {isUnread ? <MailOpen className="h-3.5 w-3.5" /> : <Mail className="h-3.5 w-3.5" />}
-                          </button>
+                            {thread.date}
+                          </span>
+
+                          {/* Actions au survol style Gmail */}
+                          <div className="hidden group-hover:flex items-center gap-1 bg-white/95 px-1 py-0.5 rounded-lg border border-slate-200/80 shadow-2xs z-10">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMoveThreadToFolder(thread, "folders", "Discussion archivée");
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full"
+                              title="Archiver"
+                            >
+                              <Archive className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMoveThreadToFolder(thread, "trash", "Discussion mise à la corbeille");
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-full"
+                              title="Supprimer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleReadThread(thread, e)}
+                              className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-full"
+                              title={isUnread ? "Marquer comme lu" : "Marquer comme non lu"}
+                            >
+                              {isUnread ? <MailOpen className="h-3.5 w-3.5" /> : <Mail className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
                         </div>
                       </div>
-
-                      {/* Subject */}
-                      <h4
-                        className={`text-xs truncate mb-1 pl-6 ${
-                          isUnread ? "font-bold text-slate-900" : "font-medium text-slate-700"
-                        }`}
-                      >
-                        {email.subject}
-                      </h4>
-
-                      {/* Snippet preview */}
-                      <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed pl-6">
-                        {email.preview}
-                      </p>
-                    </div>
-                  );
-                })
-              )}
+                    );
+                  })
+                )}
+              </div>
             </div>
-          </div>
-
-        {/* LECTURE DU MAIL */}
-        {/* LECTURE DU MAIL */}
-        <div className={`flex-1 bg-white flex flex-col relative overflow-hidden ${!selectedEmail ? "hidden lg:flex" : "flex"}`}>
-          {selectedEmail ? (
-            <>
-              {/* Toolbar complète Style Gmail */}
+          ) : (
+            /* ============================================================ */
+            /* 2. VUE DISCUSSION GMAIL (CHRONOLOGIE, DÉPLIAGE, REPONSES)    */
+            /* ============================================================ */
+            <div className="flex-1 flex flex-col h-full overflow-hidden bg-white">
+              {/* Barre d'outils Discussion Gmail */}
               <div className="h-14 border-b border-slate-200/80 flex items-center px-4 md:px-6 gap-1 bg-white sticky top-0 z-20 flex-shrink-0">
-                {/* Back button (mobile / reset view) */}
+                {/* Bouton Retour à la liste */}
                 <button
+                  type="button"
                   onClick={() => {
+                    setSelectedThreadKey(null);
                     setSelectedEmail(null);
                     setShowEmailDetailsModal(false);
                   }}
@@ -1467,555 +1903,344 @@ ${composeBody}
 
                 <div className="w-px h-5 bg-slate-200 mx-1" />
 
-                {/* Reply, Reply All, Forward quick buttons */}
+                {/* Archiver toute la discussion */}
                 <button
-                  onClick={() => handleReply(selectedEmail)}
-                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                  title="Répondre"
+                  type="button"
+                  onClick={() => handleMoveThreadToFolder(selectedThread, "folders", "Discussion archivée")}
+                  className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
+                  title="Archiver toute la discussion"
                 >
-                  <Reply className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={() => handleReplyAll(selectedEmail)}
-                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                  title="Répondre à tous"
-                >
-                  <ReplyAll className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={() => handleForward(selectedEmail)}
-                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                  title="Transférer"
-                >
-                  <Forward className="h-4 w-4" />
+                  <Archive className="h-4 w-4" />
                 </button>
 
-                <div className="w-px h-5 bg-slate-200 mx-1" />
-
-                {/* Archive */}
-                {selectedEmail.folder !== "folders" && (
-                  <button
-                    onClick={() =>
-                      handleMoveToFolder(selectedEmail, "folders", "Message archivé")
-                    }
-                    className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
-                    title="Archiver"
-                  >
-                    <Archive className="h-4 w-4" />
-                  </button>
-                )}
-
-                {/* Spam */}
-                {selectedEmail.folder !== "spams" ? (
-                  <button
-                    onClick={() =>
-                      handleMoveToFolder(selectedEmail, "spams", "Signalé comme spam")
-                    }
-                    className="p-2 text-slate-600 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
-                    title="Signaler comme spam"
-                  >
-                    <AlertOctagon className="h-4 w-4" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={() =>
-                      handleMoveToFolder(
-                        selectedEmail,
-                        "inbox",
-                        "Restauré dans la boîte de réception"
-                      )
-                    }
-                    className="p-2 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
-                    title="Ce n'est pas un spam (Restaurer)"
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                  </button>
-                )}
-
-                {/* Trash */}
-                {selectedEmail.folder !== "trash" ? (
-                  <button
-                    onClick={() =>
-                      handleMoveToFolder(selectedEmail, "trash", "Déplacé dans la corbeille")
-                    }
-                    className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                    title="Supprimer"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      onClick={() =>
-                        handleMoveToFolder(
-                          selectedEmail,
-                          "inbox",
-                          "Message restauré dans la boîte de réception"
-                        )
-                      }
-                      className="p-2 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
-                      title="Restaurer le message"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() =>
-                        handleMoveToFolder(
-                          selectedEmail,
-                          "deleted",
-                          "Message supprimé définitivement"
-                        )
-                      }
-                      className="px-2.5 py-1 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
-                      title="Supprimer définitivement"
-                    >
-                      Supprimer définitivement
-                    </button>
-                  </>
-                )}
-
-                <div className="w-px h-5 bg-slate-200 mx-1" />
-
-                {/* Mark read / unread */}
+                {/* Signaler spam */}
                 <button
-                  onClick={() => handleToggleRead(selectedEmail)}
-                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                  title={selectedEmail.read ? "Marquer comme non lu" : "Marquer comme lu"}
+                  type="button"
+                  onClick={() =>
+                    handleMoveThreadToFolder(
+                      selectedThread,
+                      selectedThread.folder === "spams" ? "inbox" : "spams",
+                      selectedThread.folder === "spams" ? "Discussion restaurée" : "Signalée comme spam"
+                    )
+                  }
+                  className="p-2 text-slate-600 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
+                  title="Signaler comme spam"
                 >
-                  {selectedEmail.read ? (
-                    <Mail className="h-4 w-4" />
-                  ) : (
-                    <MailOpen className="h-4 w-4 text-blue-600" />
-                  )}
+                  <AlertOctagon className="h-4 w-4" />
                 </button>
 
-                {/* Star toggle */}
+                {/* Supprimer discussion */}
                 <button
-                  onClick={() => handleToggleStar(selectedEmail)}
+                  type="button"
+                  onClick={() =>
+                    handleMoveThreadToFolder(
+                      selectedThread,
+                      selectedThread.folder === "trash" ? "deleted" : "trash",
+                      selectedThread.folder === "trash" ? "Supprimée définitivement" : "Placée dans la corbeille"
+                    )
+                  }
+                  className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                  title="Supprimer la discussion"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+
+                {/* Marquer non lu et retourner à la liste */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleToggleReadThread(selectedThread);
+                    setSelectedThreadKey(null);
+                    setSelectedEmail(null);
+                  }}
+                  className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                  title="Marquer comme non lu"
+                >
+                  <Mail className="h-4 w-4" />
+                </button>
+
+                {/* Suivre la discussion */}
+                <button
+                  type="button"
+                  onClick={() => handleToggleStarThread(selectedThread)}
                   className={`p-2 rounded-full transition-colors ${
-                    selectedEmail.starred
-                      ? "text-amber-500 bg-amber-50"
-                      : "text-slate-600 hover:text-amber-500 hover:bg-amber-50"
+                    selectedThread.starred ? "text-amber-500 bg-amber-50" : "text-slate-600 hover:text-amber-500 hover:bg-amber-50"
                   }`}
-                  title="Marquer comme important"
+                  title="Suivre la discussion"
                 >
-                  <Star className={`h-4 w-4 ${selectedEmail.starred ? "fill-amber-400" : ""}`} />
+                  <Star className={`h-4 w-4 ${selectedThread.starred ? "fill-amber-400" : ""}`} />
+                </button>
+
+                <div className="w-px h-5 bg-slate-200 mx-1" />
+
+                {/* Tout développer / Tout réduire les échanges */}
+                <button
+                  type="button"
+                  onClick={handleToggleAllMessages}
+                  className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors flex items-center gap-1.5 text-xs font-semibold"
+                  title="Tout développer / Tout réduire"
+                >
+                  <ChevronsUpDown className="h-4 w-4" />
+                  <span className="hidden md:inline">Déplier tout</span>
                 </button>
 
                 <div className="flex-1" />
 
-                {/* Force sync remote */}
+                {/* Actualiser et récupérer le contenu intégral */}
                 <button
-                  onClick={() => handleForceSyncEmail(selectedEmail)}
+                  type="button"
+                  onClick={() => handleForceSyncEmail(selectedThread.latestMessage)}
                   disabled={isSyncingContent}
                   className="p-2 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-full transition-colors"
-                  title="Actualiser et récupérer le contenu intégral"
+                  title="Actualiser le fil"
                 >
                   <RefreshCw className={`h-4 w-4 ${isSyncingContent ? "animate-spin text-blue-600" : ""}`} />
                 </button>
 
-                {/* Print */}
+                {/* Imprimer */}
                 <button
-                  onClick={() => handlePrintEmail(selectedEmail)}
+                  type="button"
+                  onClick={() => handlePrintEmail(selectedThread.latestMessage)}
                   className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
-                  title="Imprimer l'e-mail"
+                  title="Imprimer"
                 >
                   <Printer className="h-4 w-4" />
                 </button>
               </div>
 
-              {/* Contenu du mail */}
+              {/* Contenu de la Discussion (Sujet en haut + pile de messages chronologique) */}
               <div className="flex-1 overflow-y-auto custom-scrollbar">
                 {/* Ligne d'Objet Style Gmail */}
-                <div className="flex items-center justify-between gap-4 py-4 px-6 lg:px-8 border-b border-slate-100">
+                <div className="flex items-center justify-between gap-4 py-4 px-6 lg:px-8 border-b border-slate-100 bg-white">
                   <div className="flex items-center gap-3 min-w-0">
                     <h1 className="text-xl lg:text-2xl font-normal text-slate-900 tracking-tight break-words">
-                      {selectedEmail.subject}
+                      {selectedThread.subject}
                     </h1>
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-600 flex-shrink-0">
-                      {selectedEmail.folder === "inbox"
+                      {selectedThread.folder === "inbox"
                         ? "Boîte de réception"
-                        : selectedEmail.folder === "sent"
+                        : selectedThread.folder === "sent"
                         ? "Envoyé"
-                        : selectedEmail.folder === "drafts"
+                        : selectedThread.folder === "drafts"
                         ? "Brouillon"
-                        : selectedEmail.folder === "spams"
+                        : selectedThread.folder === "spams"
                         ? "Spam"
-                        : selectedEmail.folder === "folders"
+                        : selectedThread.folder === "folders"
                         ? "Archives"
-                        : selectedEmail.folder}
+                        : selectedThread.folder}
                     </span>
+                    {selectedThread.count > 1 && (
+                      <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                        {selectedThread.count} messages dans cette discussion
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* En-tête Expéditeur Style Gmail avec popup "à moi ▼" */}
-                <div className="flex items-start justify-between gap-4 py-4 px-6 lg:px-8 border-b border-slate-100/80">
-                  <div className="flex items-start gap-3.5 min-w-0">
-                    {/* Initial Avatar avec couleur Google */}
-                    <div
-                      className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-white text-sm shadow-2xs flex-shrink-0 ${getAvatarColor(
-                        selectedEmail.sender || selectedEmail.email
-                      )}`}
-                    >
-                      {(selectedEmail.sender || selectedEmail.email || "M").charAt(0).toUpperCase()}
-                    </div>
+                {/* Chronologie des messages de la discussion */}
+                <div className="max-w-4xl mx-auto p-6 lg:p-8 space-y-4">
+                  {selectedThread.messages.map((msg, index) => {
+                    const isExpanded = Boolean(expandedThreadIds[msg.id]);
+                    const isLast = index === selectedThread.messages.length - 1;
 
-                    <div className="space-y-0.5 min-w-0">
-                      <div className="flex flex-wrap items-baseline gap-2">
-                        <span className="font-bold text-slate-900 text-sm">
-                          {selectedEmail.sender}
-                        </span>
-                        <span className="text-xs text-slate-500 font-normal">
-                          &lt;{selectedEmail.email}&gt;
-                        </span>
-                      </div>
-
-                      {/* Déclencheur détails "à moi ▼" */}
-                      <div className="relative inline-block">
-                        <button
-                          type="button"
-                          onClick={() => setShowEmailDetailsModal(!showEmailDetailsModal)}
-                          className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 px-1.5 py-0.5 rounded transition-colors"
+                    if (!isExpanded) {
+                      /* =================================================== */
+                      /* ÉCHANGE REPLIÉ (Ligne condensée avec aperçu)       */
+                      /* =================================================== */
+                      return (
+                        <div
+                          key={msg.id}
+                          onClick={() => handleToggleExpandMessage(msg)}
+                          className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/70 hover:bg-slate-100/90 cursor-pointer transition-all select-none group"
                         >
-                          <span>à moi</span>
-                          <ChevronDown className="h-3 w-3 text-slate-400" />
-                        </button>
+                          <div className="flex items-center gap-3 min-w-0 flex-1 pr-4">
+                            <div
+                              className={`h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs text-white flex-shrink-0 ${getAvatarColor(
+                                msg.sender || msg.email
+                              )}`}
+                            >
+                              {(msg.sender || "M").charAt(0).toUpperCase()}
+                            </div>
+                            <span className="text-xs font-bold text-slate-800 flex-shrink-0">
+                              {msg.sender}
+                            </span>
+                            <span className="text-xs text-slate-500 truncate">
+                              {msg.preview}
+                            </span>
+                          </div>
 
-                        {/* Modale popup détails style Gmail */}
-                        {showEmailDetailsModal && (
-                          <div className="absolute left-0 mt-1.5 w-80 bg-white rounded-xl shadow-xl border border-slate-200 p-4 text-xs z-30 animate-in fade-in zoom-in-95 duration-150 space-y-2">
-                            <div className="flex justify-between items-center pb-2 border-b border-slate-100 font-bold text-slate-800">
-                              <span>Détails du message</span>
-                              <button
-                                onClick={() => setShowEmailDetailsModal(false)}
-                                className="p-1 text-slate-400 hover:text-slate-700 rounded"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
+                          <div className="flex items-center gap-3 flex-shrink-0 text-slate-400">
+                            {msg.attachments && msg.attachments.length > 0 && (
+                              <Paperclip className="h-3.5 w-3.5 text-slate-400" />
+                            )}
+                            <span className="text-xs font-medium text-slate-500">
+                              {msg.date}
+                            </span>
+                            <ChevronDown className="h-4 w-4 text-slate-400 group-hover:text-slate-700" />
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    /* =================================================== */
+                    /* ÉCHANGE DÉPLIÉ (En-tête, corps, pièces jointes)     */
+                    /* =================================================== */
+                    return (
+                      <div
+                        key={msg.id}
+                        className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden transition-all"
+                      >
+                        {/* En-tête de ce message */}
+                        <div className="p-5 flex items-start justify-between gap-4 border-b border-slate-100">
+                          <div className="flex items-start gap-3.5 min-w-0">
+                            <div
+                              className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-white text-sm shadow-2xs flex-shrink-0 ${getAvatarColor(
+                                msg.sender || msg.email
+                              )}`}
+                            >
+                              {(msg.sender || "M").charAt(0).toUpperCase()}
                             </div>
-                            <div className="grid grid-cols-4 gap-1 text-slate-500">
-                              <span className="font-semibold text-slate-700">De :</span>
-                              <span className="col-span-3 text-slate-800 break-words">
-                                {selectedEmail.sender} &lt;{selectedEmail.email}&gt;
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-4 gap-1 text-slate-500">
-                              <span className="font-semibold text-slate-700">À :</span>
-                              <span className="col-span-3 text-slate-800 break-words">
-                                {selectedEmail.to || userEmail}
-                              </span>
-                            </div>
-                            {selectedEmail.cc && selectedEmail.cc.length > 0 && (
-                              <div className="grid grid-cols-4 gap-1 text-slate-500">
-                                <span className="font-semibold text-slate-700">Cc :</span>
-                                <span className="col-span-3 text-slate-800 break-words">
-                                  {selectedEmail.cc.join(", ")}
+
+                            <div className="space-y-0.5 min-w-0">
+                              <div className="flex flex-wrap items-baseline gap-2">
+                                <span className="font-bold text-slate-900 text-sm">
+                                  {msg.sender}
+                                </span>
+                                <span className="text-xs text-slate-500 font-normal">
+                                  &lt;{msg.email}&gt;
                                 </span>
                               </div>
-                            )}
-                            <div className="grid grid-cols-4 gap-1 text-slate-500">
-                              <span className="font-semibold text-slate-700">Date :</span>
-                              <span className="col-span-3 text-slate-800">
-                                {selectedEmail.fullDate || selectedEmail.date}
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-4 gap-1 text-slate-500">
-                              <span className="font-semibold text-slate-700">Objet :</span>
-                              <span className="col-span-3 text-slate-800 break-words">
-                                {selectedEmail.subject}
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-4 gap-1 text-slate-500 pt-1.5 border-t border-slate-100">
-                              <span className="font-semibold text-slate-700">Sécurité :</span>
-                              <span className="col-span-3 text-emerald-700 flex items-center gap-1 font-medium">
-                                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Chiffrement standard (TLS)
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
 
-                  {/* Date & Actions rapides à droite */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="text-xs text-slate-500 font-medium hidden sm:inline">
-                      {selectedEmail.fullDate || selectedEmail.date}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleStar(selectedEmail)}
-                      className={`p-1.5 rounded-full transition-colors ${
-                        selectedEmail.starred
-                          ? "text-amber-500 bg-amber-50"
-                          : "text-slate-400 hover:text-amber-500 hover:bg-slate-100"
-                      }`}
-                      title="Important"
-                    >
-                      <Star className={`h-4 w-4 ${selectedEmail.starred ? "fill-amber-400" : ""}`} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleReply(selectedEmail)}
-                      className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
-                      title="Répondre"
-                    >
-                      <Reply className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="max-w-4xl mx-auto p-6 lg:p-8">
-
-                  {/* Corps de l'e-mail avec rendu fidèle */}
-                  {isLoadingEmailBody ? (
-                    <div className="flex items-center gap-3 py-12 text-slate-500">
-                      <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-                      <span className="text-sm">Chargement du contenu complet du message...</span>
-                    </div>
-                  ) : selectedEmail.body_html ? (
-                    <div
-                      className="ita-mail-content border border-slate-100 rounded-xl p-5 bg-white shadow-sm leading-relaxed text-[15px] break-words overflow-x-auto"
-                      style={{
-                        fontFamily: mailSettings.fontFamily,
-                        fontSize: mailSettings.fontSize,
-                        color: mailSettings.textColor,
-                      }}
-                      dangerouslySetInnerHTML={{ __html: sanitizeHtmlForDisplay(selectedEmail.body_html) }}
-                    />
-                  ) : (
-                    <div 
-                      className="ita-mail-content border border-slate-100 rounded-xl p-5 bg-white shadow-sm leading-relaxed whitespace-pre-wrap text-[15px] break-words"
-                      style={{
-                        fontFamily: mailSettings.fontFamily,
-                        fontSize: mailSettings.fontSize,
-                        color: mailSettings.textColor,
-                      }}
-                    >
-                      {selectedEmail.body_text || selectedEmail.body || (
-                        <div className="py-4 flex flex-col items-start gap-3">
-                          <p className="italic text-slate-400 text-sm">
-                            (Ce message ne contient pas de texte préchargé)
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => handleForceSyncEmail(selectedEmail)}
-                            disabled={isSyncingContent}
-                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 cursor-pointer"
-                          >
-                            <RefreshCw className={`h-3.5 w-3.5 ${isSyncingContent ? "animate-spin" : ""}`} />
-                            {isSyncingContent ? "Récupération en cours..." : "Actualiser et charger le contenu intégral"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Section Chronologie des échanges (Discussion suivie) */}
-                  {(() => {
-                    const cleanSubj = normalizeSubject(selectedEmail.subject);
-                    if (!cleanSubj || cleanSubj === "(sans objet)") return null;
-
-                    // Tous les messages partageant le même objet
-                    const related = emails.filter((e) => {
-                      return normalizeSubject(e.subject) === cleanSubj;
-                    }).sort((a, b) => {
-                      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-                      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-                      return dateA - dateB;
-                    });
-
-                    if (related.length <= 1) return null;
-
-                    return (
-                      <div className="mt-10 pt-6 border-t border-slate-200">
-                        <div className="flex items-center justify-between mb-4">
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
-                            <RotateCcw className="h-4 w-4 text-blue-600" />
-                            Chronologie de la discussion ({related.length} échanges)
-                          </h3>
-                          <span className="text-xs text-slate-400">
-                            Par ordre chronologique
-                          </span>
-                        </div>
-
-                        <div className="space-y-3">
-                          {related.map((msg, index) => {
-                            const isCurrent = msg.id === selectedEmail.id;
-                            const isExpanded = isCurrent || Boolean(expandedThreadIds[msg.id]);
-
-                            return (
-                              <div
-                                key={msg.id}
-                                className={`rounded-xl border transition-all overflow-hidden ${
-                                  isCurrent
-                                    ? "border-blue-300 bg-blue-50/30 ring-2 ring-blue-500/10"
-                                    : "border-slate-200 bg-slate-50/70 hover:border-slate-300 hover:bg-slate-50"
-                                }`}
-                              >
-                                {/* Barre d'en-tête de l'échange */}
-                                <div
-                                  onClick={() => {
-                                    if (!isCurrent) {
-                                      setExpandedThreadIds((prev) => ({
-                                        ...prev,
-                                        [msg.id]: !prev[msg.id],
-                                      }));
-                                    }
-                                  }}
-                                  className="p-3.5 flex items-center justify-between cursor-pointer select-none"
-                                >
-                                  <div className="flex items-center gap-3 min-w-0 pr-4">
-                                    <div
-                                      className={`h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs text-white flex-shrink-0 ${
-                                        msg.folder === "sent"
-                                          ? "bg-slate-700"
-                                          : "bg-blue-600"
-                                      }`}
-                                    >
-                                      {(msg.sender || "M").charAt(0).toUpperCase()}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-bold text-slate-800 truncate flex items-center gap-2">
-                                        <span>{msg.sender}</span>
-                                        <span className="text-[11px] font-normal text-slate-400">
-                                          &lt;{msg.email}&gt;
-                                        </span>
-                                        {msg.folder === "sent" && (
-                                          <span className="text-[10px] font-semibold bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
-                                            Envoyé par vous
-                                          </span>
-                                        )}
-                                        {isCurrent && (
-                                          <span className="text-[10px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded">
-                                            Message ouvert
-                                          </span>
-                                        )}
-                                      </p>
-                                      {!isExpanded && (
-                                        <p className="text-xs text-slate-500 truncate mt-0.5">
-                                          {msg.preview}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="flex items-center gap-3 flex-shrink-0">
-                                    <span className="text-[11px] font-medium text-slate-400">
-                                      {msg.fullDate || msg.date}
-                                    </span>
-                                    {!isCurrent && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleSelectEmail(msg);
-                                        }}
-                                        className="text-[11px] font-bold text-blue-600 hover:underline px-2 py-1 rounded bg-white border border-slate-200"
-                                      >
-                                        Ouvrir
-                                      </button>
-                                    )}
-                                    {isExpanded ? (
-                                      <ChevronUp className="h-4 w-4 text-slate-400" />
-                                    ) : (
-                                      <ChevronDown className="h-4 w-4 text-slate-400" />
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Contenu déplié du message dans le fil */}
-                                {isExpanded && !isCurrent && (
-                                  <div className="p-4 pt-2 border-t border-slate-200/80 bg-white">
-                                    <div className="text-xs text-slate-500 mb-2 pb-2 border-b border-slate-100 flex justify-between">
-                                      <span><strong>À :</strong> {msg.to}</span>
-                                      {msg.cc && msg.cc.length > 0 && <span><strong>Cc :</strong> {msg.cc.join(", ")}</span>}
-                                    </div>
-                                    {msg.body_html ? (
-                                      <div
-                                        className="text-xs text-slate-800 leading-relaxed overflow-x-auto max-h-[300px]"
-                                        dangerouslySetInnerHTML={{ __html: sanitizeHtmlForDisplay(msg.body_html) }}
-                                      />
-                                    ) : (
-                                      <div className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap max-h-[300px] overflow-y-auto">
-                                        {msg.body_text || msg.body}
-                                      </div>
-                                    )}
-                                  </div>
+                              <div className="text-xs text-slate-500 flex items-center gap-1">
+                                <span>À : {msg.to || userEmail}</span>
+                                {msg.cc && msg.cc.length > 0 && (
+                                  <span className="ml-1 text-slate-400">
+                                    (Cc : {msg.cc.join(", ")})
+                                  </span>
                                 )}
                               </div>
-                            );
-                          })}
+                            </div>
+                          </div>
+
+                          {/* Date & Réduire */}
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className="text-xs text-slate-500 font-medium">
+                              {msg.fullDate || msg.date}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleReply(msg)}
+                              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
+                              title="Répondre à ce message"
+                            >
+                              <Reply className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleExpandMessage(msg)}
+                              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors"
+                              title="Réduire ce message"
+                            >
+                              <ChevronUp className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Corps du message */}
+                        <div className="p-6">
+                          {isLoadingEmailBody && isLast && !msg.body_html && !msg.body_text ? (
+                            <div className="flex items-center gap-3 py-6 text-slate-500">
+                              <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+                              <span className="text-xs">Chargement du contenu...</span>
+                            </div>
+                          ) : msg.body_html ? (
+                            <div
+                              className="ita-mail-content leading-relaxed text-[15px] break-words overflow-x-auto"
+                              style={{
+                                fontFamily: mailSettings.fontFamily,
+                                fontSize: mailSettings.fontSize,
+                                color: mailSettings.textColor,
+                              }}
+                              dangerouslySetInnerHTML={{ __html: sanitizeHtmlForDisplay(msg.body_html) }}
+                            />
+                          ) : (
+                            <div
+                              className="ita-mail-content leading-relaxed whitespace-pre-wrap text-[15px] break-words"
+                              style={{
+                                fontFamily: mailSettings.fontFamily,
+                                fontSize: mailSettings.fontSize,
+                                color: mailSettings.textColor,
+                              }}
+                            >
+                              {msg.body_text || msg.body || (
+                                <p className="italic text-slate-400 text-xs">
+                                  (Ce message ne contient pas de texte préchargé)
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Pièces jointes de ce message spécifique */}
+                          {msg.attachments && msg.attachments.length > 0 && (
+                            <div className="mt-6 pt-4 border-t border-slate-100">
+                              <p className="text-xs font-bold text-slate-500 mb-2 flex items-center gap-1.5">
+                                <Paperclip className="h-3.5 w-3.5 text-blue-600" />
+                                Pièces jointes ({msg.attachments.length})
+                              </p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                {msg.attachments.map((att, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="flex items-center justify-between p-2.5 rounded-xl border border-slate-200 bg-slate-50/70 hover:bg-white transition-all"
+                                  >
+                                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                      <File className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                                      <span className="text-xs font-semibold text-slate-800 truncate">
+                                        {att.filename}
+                                      </span>
+                                      <span className="text-[10px] text-slate-400">
+                                        ({formatFileSize(att.size)})
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDownloadAttachment(att, msg)}
+                                      className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg text-xs"
+                                      title="Télécharger"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
-                  })()}
+                  })}
 
-                  {/* Section Pièces Jointes (si disponibles) */}
-                  {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
-                    <div className="mt-10 pt-6 border-t border-slate-200/80">
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2">
-                        <Paperclip className="h-4 w-4 text-blue-600" />
-                        Pièces jointes ({selectedEmail.attachments.length})
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {selectedEmail.attachments.map((att, index) => {
-                          const isImage = att.content_type?.startsWith("image/");
-                          return (
-                            <div
-                              key={att.id || index}
-                              className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50/70 hover:bg-white hover:border-blue-300 hover:shadow-sm transition-all group"
-                            >
-                              <div className="flex items-center gap-3 min-w-0 pr-3">
-                                <div className="p-2.5 rounded-lg bg-blue-50 text-blue-600 flex-shrink-0">
-                                  {isImage ? (
-                                    <ImageIcon className="h-5 w-5" />
-                                  ) : (
-                                    <File className="h-5 w-5" />
-                                  )}
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-slate-800 truncate">
-                                    {att.filename}
-                                  </p>
-                                  <p className="text-xs text-slate-500">
-                                    {formatFileSize(att.size)}
-                                  </p>
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => handleDownloadAttachment(att, selectedEmail)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-colors flex-shrink-0 shadow-sm"
-                                title={`Télécharger ${att.filename}`}
-                              >
-                                <Download className="h-3.5 w-3.5" />
-                                Télécharger
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Actions Rapides en bas du mail Style Gmail (Pills) */}
-                  <div className="mt-12 pt-6 border-t border-slate-100 flex flex-wrap gap-2.5">
+                  {/* Actions Rapides en bas du fil Style Gmail */}
+                  <div className="pt-6 border-t border-slate-200 flex flex-wrap gap-2.5">
                     <button
-                      onClick={() => handleReply(selectedEmail)}
+                      type="button"
+                      onClick={() => handleReply(selectedThread.latestMessage)}
                       className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all shadow-2xs"
                     >
                       <Reply className="h-4 w-4 text-slate-500" />
                       <span>Répondre</span>
                     </button>
                     <button
-                      onClick={() => handleReplyAll(selectedEmail)}
+                      type="button"
+                      onClick={() => handleReplyAll(selectedThread.latestMessage)}
                       className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all shadow-2xs"
                     >
                       <ReplyAll className="h-4 w-4 text-slate-500" />
                       <span>Répondre à tous</span>
                     </button>
                     <button
-                      onClick={() => handleForward(selectedEmail)}
+                      type="button"
+                      onClick={() => handleForward(selectedThread.latestMessage)}
                       className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all shadow-2xs"
                     >
                       <Forward className="h-4 w-4 text-slate-500" />
@@ -2024,21 +2249,10 @@ ${composeBody}
                   </div>
                 </div>
               </div>
-            </>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center bg-white p-6 text-center">
-              <div className="h-20 w-20 bg-[#f2f6fc] rounded-full flex items-center justify-center mb-4 text-slate-400">
-                <MailOpen className="h-10 w-10 text-blue-500/70" />
-              </div>
-              <h3 className="text-base font-semibold text-slate-800">Aucun message sélectionné</h3>
-              <p className="text-xs text-slate-400 mt-1 max-w-xs">
-                Sélectionnez une conversation dans la liste à gauche pour afficher son contenu.
-              </p>
             </div>
           )}
         </div>
       </div>
-    </div>
 
       {/* COMPOSER (OVERLAY STYLE GMAIL MATERIAL 3) */}
       {isComposing && (
