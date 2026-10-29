@@ -98,14 +98,14 @@ function SubscriptionContent() {
           // Analyser les métadonnées enregistrées (ex: stripe_customer_id = fedapay:tx|interval|count|amount)
           let metaInterval: BillingInterval = "monthly";
           let metaCount = 1;
-          let metaAmount = 10000;
+          let metaAmount = 5000;
 
           if (orgData?.stripe_customer_id && orgData.stripe_customer_id.startsWith("fedapay:")) {
             const parts = orgData.stripe_customer_id.replace("fedapay:", "").split("|");
             if (parts.length >= 4) {
               metaInterval = parts[1] as BillingInterval;
               metaCount = parseInt(parts[2]) || 1;
-              metaAmount = parseInt(parts[3]) || 10000;
+              metaAmount = parseInt(parts[3]) || 5000;
             }
           }
 
@@ -363,7 +363,7 @@ function SubscriptionContent() {
               {isSubActive ? "Modifier ou renouveler votre abonnement" : "Configurer votre abonnement"}
             </h3>
             <p className="text-sm text-slate-500">
-              Tarification officielle : 10.000 F pour le premier mail, 5.000 F par mail supplémentaire.
+              Tarification officielle : 5.000 F pour le premier mail, 2.500 F par mail supplémentaire.
             </p>
           </div>
         </div>
@@ -388,8 +388,8 @@ function SubscriptionContent() {
                   }`}
                 >
                   <p className="font-bold text-slate-900 text-sm">Formule Mensuelle</p>
-                  <p className="text-xs text-slate-500 mt-1">10 000 F CFA pour le 1er mail</p>
-                  <p className="text-xs text-blue-600 font-semibold mt-0.5">+ 5 000 F / mail add.</p>
+                  <p className="text-xs text-slate-500 mt-1">5 000 F CFA pour le 1er mail</p>
+                  <p className="text-xs text-blue-600 font-semibold mt-0.5">+ 2 500 F / mail add.</p>
                 </button>
 
                 <button
@@ -405,8 +405,8 @@ function SubscriptionContent() {
                     -20% (2 mois offerts)
                   </span>
                   <p className="font-bold text-slate-900 text-sm">Formule Annuelle</p>
-                  <p className="text-xs text-slate-500 mt-1">100 000 F CFA pour le 1er mail</p>
-                  <p className="text-xs text-emerald-600 font-semibold mt-0.5">+ 50 000 F / mail add.</p>
+                  <p className="text-xs text-slate-500 mt-1">50 000 F CFA pour le 1er mail</p>
+                  <p className="text-xs text-emerald-600 font-semibold mt-0.5">+ 25 000 F / mail add.</p>
                 </button>
               </div>
             </div>
