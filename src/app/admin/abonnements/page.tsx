@@ -77,7 +77,7 @@ export default function AbonnementsAdminPage() {
 
         let interval: BillingInterval = "monthly";
         let count = 1;
-        let amount = 5000;
+        let amount = 2500;
 
         // Analyser les métadonnées (ex: fedapay:tx|interval|count|amount)
         if (org.stripe_customer_id && org.stripe_customer_id.startsWith("fedapay:")) {
@@ -85,7 +85,7 @@ export default function AbonnementsAdminPage() {
           if (parts.length >= 4) {
             interval = parts[1] as BillingInterval;
             count = parseInt(parts[2]) || 1;
-            amount = parseInt(parts[3]) || 5000;
+            amount = parseInt(parts[3]) || 2500;
           }
         }
 
@@ -408,7 +408,7 @@ export default function AbonnementsAdminPage() {
                     }`}
                   >
                     Mensuel
-                    <span className="block text-xs font-normal text-slate-500 mt-0.5">5k + 2.5k/mail</span>
+                    <span className="block text-xs font-normal text-slate-500 mt-0.5">2.5k + 1.25k/mail</span>
                   </button>
                   <button
                     type="button"
@@ -420,7 +420,7 @@ export default function AbonnementsAdminPage() {
                     }`}
                   >
                     Annuel (-20%)
-                    <span className="block text-xs font-normal text-slate-500 mt-0.5">50k + 25k/mail</span>
+                    <span className="block text-xs font-normal text-slate-500 mt-0.5">25k + 12.5k/mail</span>
                   </button>
                 </div>
               </div>

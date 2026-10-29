@@ -101,7 +101,7 @@ export default function MailboxesPage() {
     }
 
     if (maxAllowedBoxes !== null && mailboxes.length >= maxAllowedBoxes) {
-      setAddError(`Limite atteinte (${mailboxes.length} / ${maxAllowedBoxes} boîtes). Veuillez faire évoluer votre abonnement pour ajouter des boîtes supplémentaires (+2 500 F CFA / mois par boîte).`);
+      setAddError(`Limite atteinte (${mailboxes.length} / ${maxAllowedBoxes} boîtes). Veuillez faire évoluer votre abonnement pour ajouter des boîtes supplémentaires (+1 250 F CFA / mois par boîte).`);
       setIsAdding(false);
       return;
     }
@@ -188,7 +188,7 @@ export default function MailboxesPage() {
             <div>
               <p className="font-bold">Limite de boîtes atteinte pour votre organisation</p>
               <p className="text-xs text-amber-800 mt-0.5">
-                Votre formule actuelle inclut <strong>{maxAllowedBoxes} boîte{maxAllowedBoxes > 1 ? "s" : ""}</strong>. Vous pouvez facilement ajouter des adresses pour seulement <strong>2.500 F CFA / mois</strong> (ou <strong>25.000 F CFA / an</strong>) chacune.
+                Votre formule actuelle inclut <strong>{maxAllowedBoxes} boîte{maxAllowedBoxes > 1 ? "s" : ""}</strong>. Vous pouvez facilement ajouter des adresses pour seulement <strong>1.250 F CFA / mois</strong> (ou <strong>12.500 F CFA / an</strong>) chacune.
               </p>
             </div>
           </div>

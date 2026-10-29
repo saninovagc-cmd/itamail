@@ -227,7 +227,7 @@ export default function TarifsPage() {
 
                 <div className="mb-6">
                   <div className="text-3xl font-extrabold text-slate-900">
-                    5 000 <span className="text-base font-normal text-slate-500">F CFA / mois</span>
+                    2 500 <span className="text-base font-normal text-slate-500">F CFA / mois</span>
                   </div>
                   <p className="text-xs text-blue-600 font-semibold mt-1">
                     Pour la 1ère boîte mail de l&apos;organisation
@@ -236,7 +236,7 @@ export default function TarifsPage() {
 
                 <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 mb-6">
                   <p className="text-sm font-bold text-slate-800">
-                    + 2 500 F CFA <span className="font-normal text-slate-500">/ mois</span>
+                    + 1 250 F CFA <span className="font-normal text-slate-500">/ mois</span>
                   </p>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Par boîte supplémentaire ajoutée
@@ -291,19 +291,19 @@ export default function TarifsPage() {
 
                 <div className="mb-6">
                   <div className="text-3xl font-extrabold text-slate-900">
-                    50 000 <span className="text-base font-normal text-slate-500">F CFA / an</span>
+                    25 000 <span className="text-base font-normal text-slate-500">F CFA / an</span>
                   </div>
                   <p className="text-xs text-emerald-600 font-semibold mt-1">
-                    Économisez 10 000 F CFA sur la 1ère boîte (au lieu de 60 000 F)
+                    Économisez 5 000 F CFA sur la 1ère boîte (au lieu de 30 000 F)
                   </p>
                 </div>
 
                 <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-100 mb-6">
                   <p className="text-sm font-bold text-slate-800">
-                    + 25 000 F CFA <span className="font-normal text-slate-500">/ an</span>
+                    + 12 500 F CFA <span className="font-normal text-slate-500">/ an</span>
                   </p>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Par boîte supplémentaire (au lieu de 30 000 F CFA)
+                    Par boîte supplémentaire (au lieu de 15 000 F CFA)
                   </p>
                 </div>
 

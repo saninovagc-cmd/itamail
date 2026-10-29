@@ -35,7 +35,7 @@ export default function AdminDashboardPage() {
       }
       
       // Calcul basique du MRR (simulé à partir du nombre de clients pour l'instant)
-      const baseMRR = (orgCount || 0) * 7500;
+      const baseMRR = (orgCount || 0) * 3750;
 
       setStats({
         totalClients: orgCount || 0,
